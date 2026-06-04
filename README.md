@@ -6,33 +6,20 @@ It ships as:
 - a CLI (`tm`) for managing tasks from the terminal
 - an MCP stdio server (`tm mcp`) that exposes those tasks to MCP-aware clients like Claude Code
 
-## Building from source code
 
-```sh
-task build
+## Installation
+
+You can install `tm` easily by running command:
+
 ```
-
-The binary is placed at `./bin/tm`.
-
-## CLI usage
-
-```sh
-./bin/tm task create ...
-./bin/tm task list
-./bin/tm task get <id>
-./bin/tm task edit <id> ...
-./bin/tm task comment <id> ...
+brew install sn3d/tap/tm
 ```
-
-Run `./bin/tm --help` for the full command tree.
 
 ## Add the TM MCP server to Claude Code
 
-Build the binary first, then register it with Claude Code using `claude mcp add`:
+After installatin, you can register it with Claude Code using `claude mcp add`:
 
 ```sh
-task build
-
 claude mcp add tm -- "$(pwd)/bin/tm" mcp
 ```
 
@@ -71,3 +58,14 @@ Restart any running Claude Code sessions for the change to take effect. Run `/pe
 ## Configuration
 
 TM reads `taskmanager.yaml` from the current working directory if present. When the file is missing, TM falls back to built-in defaults.
+
+
+## Building from source code
+
+```sh
+task build
+```
+
+The binary is placed at `./bin/tm`.
+
+
