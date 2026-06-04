@@ -1,0 +1,434 @@
+package filestorage
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/sn3d/tm/internal/client"
+)
+
+func tmpDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("tm-git-test-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func newTempRepo(t *testing.T) client.TasksRepository {
+	t.Helper()
+	b, err := NewBackend(tmpDir(t))
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	return b.Tasks()
+}
+
+func TestTasksRepository_Create_AssignsID(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+	task := client.Task{
+		Subject:       "write tests",
+		Description:   "cover the git backend",
+		State:         client.TaskStateTodo,
+		AssignedAgent: "go-developer",
+	}
+
+	// Act
+	err := repo.Save(&task)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if task.ID == "" {
+		t.Fatal("expected Save to assign a non-empty ID")
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected task, got nil")
+	}
+	if got.Subject != task.Subject || got.Description != task.Description ||
+		got.State != task.State || got.AssignedAgent != task.AssignedAgent {
+		t.Errorf("stored task mismatch: %+v", got)
+	}
+}
+
+func TestTasksRepository_Create_AssignsUniqueIDs(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+	first := client.Task{Subject: "a", State: client.TaskStateTodo}
+	second := client.Task{Subject: "b", State: client.TaskStateTodo}
+
+	// Act
+	if err := repo.Save(&first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	if err := repo.Save(&second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+
+	// Assert
+	if first.ID == "" || second.ID == "" {
+		t.Fatalf("expected non-empty IDs, got first=%q second=%q", first.ID, second.ID)
+	}
+	if first.ID == second.ID {
+		t.Errorf("expected unique IDs, got both %q", first.ID)
+	}
+}
+
+func TestTasksRepository_GetByID_NotFound(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+
+	// Act
+	got, err := repo.GetByID("does-not-exist")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for missing task, got %+v", got)
+	}
+}
+
+func TestTasksRepository_GetAll(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+	seed := []client.Task{
+		{ID: "1", Subject: "first", State: client.TaskStateTodo, AssignedAgent: "a"},
+		{ID: "2", Subject: "second", State: client.TaskStateInProgress, AssignedAgent: "b"},
+		{ID: "3", Subject: "third", State: client.TaskStateDone, AssignedAgent: "c"},
+	}
+	for i := range seed {
+		if err := repo.Save(&seed[i]); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+
+	// Act
+	got, err := repo.GetAll()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	if len(got) != len(seed) {
+		t.Fatalf("expected %d tasks, got %d", len(seed), len(got))
+	}
+	for i, task := range got {
+		if task.Subject != seed[i].Subject || task.AssignedAgent != seed[i].AssignedAgent {
+			t.Errorf("task %d mismatch: got %+v, want %+v", i, task, seed[i])
+		}
+	}
+}
+
+func TestTasksRepository_Create_AssignsSequentialNumericIDs(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+
+	// Act
+	first := client.Task{Subject: "a", State: client.TaskStateTodo}
+	if err := repo.Save(&first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	second := client.Task{Subject: "b", State: client.TaskStateTodo}
+	if err := repo.Save(&second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+	third := client.Task{Subject: "c", State: client.TaskStateTodo}
+	if err := repo.Save(&third); err != nil {
+		t.Fatalf("Save third: %v", err)
+	}
+
+	// Assert
+	if first.ID != "1" || second.ID != "2" || third.ID != "3" {
+		t.Errorf("expected sequential IDs 1,2,3; got %q,%q,%q", first.ID, second.ID, third.ID)
+	}
+}
+
+func TestTasksRepository_Save_WritesSlugFilename(t *testing.T) {
+	// Arrange
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	repo := b.Tasks()
+	task := client.Task{Subject: "Implement the login flow!", State: client.TaskStateTodo}
+
+	// Act
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Assert
+	want := filepath.Join(dir, "tasks", "1--implement-the-login-flow.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("expected file at %q: %v", want, err)
+	}
+}
+
+func TestTasksRepository_Save_RenamesOnSubjectChange(t *testing.T) {
+	// Arrange
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	repo := b.Tasks()
+	task := client.Task{Subject: "old subject", State: client.TaskStateTodo}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save initial: %v", err)
+	}
+	original := filepath.Join(dir, "tasks", "1--old-subject.md")
+	if _, err := os.Stat(original); err != nil {
+		t.Fatalf("expected original file: %v", err)
+	}
+
+	// Act
+	task.Subject = "new subject"
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save update: %v", err)
+	}
+
+	// Assert
+	if _, err := os.Stat(original); !os.IsNotExist(err) {
+		t.Errorf("expected old file to be removed, got err=%v", err)
+	}
+	renamed := filepath.Join(dir, "tasks", "1--new-subject.md")
+	if _, err := os.Stat(renamed); err != nil {
+		t.Errorf("expected renamed file at %q: %v", renamed, err)
+	}
+}
+
+func TestTasksRepository_JiraStyleID_RoundTrips(t *testing.T) {
+	// Arrange
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	repo := b.Tasks()
+	task := client.Task{ID: "TASK-123", Subject: "imported from jira", State: client.TaskStateTodo}
+
+	// Act
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Assert: filename preserves the dash in the ID
+	want := filepath.Join(dir, "tasks", "TASK-123--imported-from-jira.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("expected file at %q: %v", want, err)
+	}
+	got, err := repo.GetByID("TASK-123")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil || got.ID != "TASK-123" || got.Subject != "imported from jira" {
+		t.Errorf("round-trip failed: %+v", got)
+	}
+}
+
+func TestTasksRepository_PlanID_RoundTrip(t *testing.T) {
+	b := newTempBackend(t)
+	plan := client.Plan{ID: "PLAN-1", Subject: "container", State: client.PlanStateDraft}
+	if err := b.Plans().Save(&plan); err != nil {
+		t.Fatalf("seed plan: %v", err)
+	}
+	task := client.Task{ID: "task-1", Subject: "in plan", State: client.TaskStateTodo, PlanID: "PLAN-1"}
+	if err := b.Tasks().Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := b.Tasks().GetByID("task-1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected task, got nil")
+	}
+	if got.PlanID != "PLAN-1" {
+		t.Errorf("expected PlanID=PLAN-1, got %q", got.PlanID)
+	}
+}
+
+func TestTasksRepository_GetByPlan(t *testing.T) {
+	b := newTempBackend(t)
+	for _, id := range []string{"PLAN-1", "PLAN-2"} {
+		if err := b.Plans().Save(&client.Plan{ID: id, Subject: id, State: client.PlanStateDraft}); err != nil {
+			t.Fatalf("seed plan %q: %v", id, err)
+		}
+	}
+	seed := []client.Task{
+		{ID: "t-a", Subject: "a", State: client.TaskStateTodo, PlanID: "PLAN-1"},
+		{ID: "t-b", Subject: "b", State: client.TaskStateTodo, PlanID: "PLAN-1"},
+		{ID: "t-c", Subject: "c", State: client.TaskStateTodo, PlanID: "PLAN-2"},
+		{ID: "t-d", Subject: "d", State: client.TaskStateTodo}, // standalone
+	}
+	for i := range seed {
+		if err := b.Tasks().Save(&seed[i]); err != nil {
+			t.Fatalf("seed task %q: %v", seed[i].ID, err)
+		}
+	}
+
+	got, err := b.Tasks().GetByPlan("PLAN-1")
+	if err != nil {
+		t.Fatalf("GetByPlan: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 tasks for PLAN-1, got %d", len(got))
+	}
+	for _, task := range got {
+		if task.PlanID != "PLAN-1" {
+			t.Errorf("expected PlanID=PLAN-1, got %q for task %q", task.PlanID, task.ID)
+		}
+	}
+
+	standalone, err := b.Tasks().GetByPlan("")
+	if err != nil {
+		t.Fatalf("GetByPlan(empty): %v", err)
+	}
+	if len(standalone) != 1 || standalone[0].ID != "t-d" {
+		t.Errorf("expected standalone task t-d, got %+v", standalone)
+	}
+}
+
+// Legacy task files written before the plan_id field existed must still
+// parse cleanly. Standalone tasks must not emit the field when saved.
+func TestTasksRepository_ParsesLegacyFile_WithoutPlanID(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+
+	legacyPath := filepath.Join(dir, "tasks", "legacy-1.md")
+	legacyContent := `---
+id: legacy-1
+state: todo
+assigned_agent: alice
+---
+
+# legacy task
+
+some description
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+
+	got, err := b.Tasks().GetByID("legacy-1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected legacy task to load")
+	}
+	if got.PlanID != "" {
+		t.Errorf("expected empty PlanID for legacy task, got %q", got.PlanID)
+	}
+	if got.Subject != "legacy task" || got.AssignedAgent != "alice" {
+		t.Errorf("legacy task did not parse correctly: %+v", got)
+	}
+}
+
+func TestTasksRepository_Save_StandaloneOmitsPlanIDFromFile(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	task := client.Task{ID: "task-1", Subject: "standalone", State: client.TaskStateTodo}
+	if err := b.Tasks().Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	path := filepath.Join(dir, "tasks", "task-1--standalone.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read task file: %v", err)
+	}
+	if bytes.Contains(raw, []byte("plan_id")) {
+		t.Errorf("standalone task file should not emit plan_id, got:\n%s", string(raw))
+	}
+}
+
+func TestTasksRepository_Update(t *testing.T) {
+	// Arrange
+	repo := newTempRepo(t)
+	original := client.Task{ID: "update-target", Subject: "draft", Description: "v1", State: client.TaskStateTodo, AssignedAgent: "agent-a"}
+	if err := repo.Save(&original); err != nil {
+		t.Fatalf("Save (initial): %v", err)
+	}
+	updated := client.Task{ID: "update-target", Subject: "final", Description: "v2", State: client.TaskStateDone, AssignedAgent: "agent-b"}
+
+	// Act
+	err := repo.Save(&updated)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Save (update): %v", err)
+	}
+	got, err := repo.GetByID("update-target")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected task, got nil")
+	}
+	if got.Subject != updated.Subject || got.Description != updated.Description ||
+		got.State != updated.State || got.AssignedAgent != updated.AssignedAgent {
+		t.Errorf("update did not persist: got %+v, want %+v", got, updated)
+	}
+}
+
+// Save without an explicit State backfills the default so the round-trip
+// through Load succeeds.
+func TestTasksRepository_Save_DefaultsEmptyState(t *testing.T) {
+	repo := newTempRepo(t)
+	task := client.Task{Subject: "no state"}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.State != client.TaskStateDefault {
+		t.Errorf("expected default state %q, got %q", client.TaskStateDefault, got.State)
+	}
+}
+
+// A file whose YAML carries a state name outside the canonical set surfaces
+// as a parse error rather than silently coercing.
+func TestTasksRepository_RejectsUnknownStateOnLoad(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	path := filepath.Join(dir, "tasks", "corrupt.md")
+	content := `---
+id: corrupt
+state: bogus
+assigned_agent: alice
+---
+
+# corrupt task
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("seed corrupt file: %v", err)
+	}
+	if _, err := b.Tasks().GetByID("corrupt"); err == nil {
+		t.Fatal("expected error loading task with unknown state, got nil")
+	}
+}

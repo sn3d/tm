@@ -1,0 +1,18 @@
+version: '3'
+
+tasks:
+  build:
+    desc: "Build the tm binary into ./bin"
+    cmds:
+      - mkdir -p ./bin
+      - go build -o ./bin/tm ./main.go
+
+  test:
+    desc: "Run all Go tests with race detector, formatted via tparse"
+    cmds:
+      - go test -json -race -count=1 ./... | tparse -all
+
+  install:
+    desc: "Install TM to the ${GOPATH}/bin, will be available in system"
+    cmds:
+      - go install
