@@ -44,3 +44,17 @@ changelog:
 
 release:
   name_template: '{{ .ProjectName }}-v{{ .Version }}'
+
+brews:
+  - name: tm
+    repository:
+      owner: sn3d
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/sn3d/tm"
+    description: "Local task manager for agents"
+    install: |
+      bin.install "tm"
+    test: |
+      system "#{bin}/tm", "--version"
