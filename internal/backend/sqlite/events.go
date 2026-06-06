@@ -11,22 +11,6 @@ import (
 	"github.com/sn3d/tm/internal/client"
 )
 
-const eventsSchema = `
-CREATE TABLE IF NOT EXISTS events (
-	id      TEXT PRIMARY KEY,
-	ts      TEXT NOT NULL,
-	actor   TEXT NOT NULL DEFAULT '',
-	kind    TEXT NOT NULL,
-	task_id TEXT NOT NULL DEFAULT '',
-	plan_id TEXT NOT NULL DEFAULT '',
-	payload TEXT NOT NULL DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
-CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, ts);
-CREATE INDEX IF NOT EXISTS idx_events_plan ON events(plan_id, ts);
-CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor, ts);
-`
-
 type eventsRepository struct {
 	db *sql.DB
 }

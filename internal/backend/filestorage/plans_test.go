@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sn3d/tm/internal/client"
 )
@@ -167,5 +168,84 @@ func TestPlansRepository_Update(t *testing.T) {
 	if got.Subject != updated.Subject || got.Description != updated.Description ||
 		got.State != updated.State || got.AssignedAgent != updated.AssignedAgent {
 		t.Errorf("update did not persist: got %+v, want %+v", got, updated)
+	}
+}
+
+func TestPlansRepository_Save_StampsTimestamps(t *testing.T) {
+	repo := newTempPlansRepo(t)
+	plan := client.Plan{Subject: "stamps"}
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save (initial): %v", err)
+	}
+	if plan.CreatedAt.IsZero() || plan.UpdatedAt.IsZero() {
+		t.Fatalf("expected timestamps stamped, got CreatedAt=%v UpdatedAt=%v", plan.CreatedAt, plan.UpdatedAt)
+	}
+	created, firstUpdated := plan.CreatedAt, plan.UpdatedAt
+
+	time.Sleep(2 * time.Millisecond)
+	plan.Subject = "stamps v2"
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save (update): %v", err)
+	}
+	if !plan.CreatedAt.Equal(created) {
+		t.Errorf("CreatedAt should be preserved: got %v, want %v", plan.CreatedAt, created)
+	}
+	if !plan.UpdatedAt.After(firstUpdated) {
+		t.Errorf("UpdatedAt should advance: got %v, was %v", plan.UpdatedAt, firstUpdated)
+	}
+}
+
+// A caller-supplied non-zero CreatedAt on first insert (e.g. importing data
+// from another system) must be honored rather than overwritten with now.
+func TestPlansRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
+	repo := newTempPlansRepo(t)
+	want := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	plan := client.Plan{Subject: "imported", CreatedAt: want}
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !plan.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt overwritten: got %v, want %v", plan.CreatedAt, want)
+	}
+	got, err := repo.GetByID(plan.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt did not round-trip: got %v, want %v", got.CreatedAt, want)
+	}
+}
+
+// Legacy plan files written before the timestamp columns existed must parse
+// cleanly with zero-valued CreatedAt/UpdatedAt.
+func TestPlansRepository_ParsesLegacyFile_WithoutTimestamps(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+
+	legacyPath := filepath.Join(dir, "plans", "legacy-1.md")
+	legacyContent := `---
+id: legacy-1
+state: draft
+assigned_agent: alice
+---
+
+# legacy plan
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+
+	got, err := b.Plans().GetByID("legacy-1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected legacy plan to load")
+	}
+	if !got.CreatedAt.IsZero() || !got.UpdatedAt.IsZero() {
+		t.Errorf("expected zero timestamps for legacy plan, got CreatedAt=%v UpdatedAt=%v", got.CreatedAt, got.UpdatedAt)
 	}
 }

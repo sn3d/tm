@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sn3d/tm/internal/client"
 )
@@ -17,8 +17,10 @@ type tasksRepository struct {
 
 // Save creates or updates the task file. When t.ID is empty the next
 // sequential ID from the shared task/plan counter is assigned and written
-// back into t.ID. Existing comments on the file (if any) are preserved
-// across updates.
+// back into t.ID. CreatedAt is stamped on first save and preserved on
+// updates; UpdatedAt is refreshed on every save. Both fields are written
+// back into t. Existing comments on the file (if any) are preserved across
+// updates.
 func (tr *tasksRepository) Save(t *client.Task) error {
 	if t.ID == "" {
 		next, err := nextSharedNumericID(tr.dir)
@@ -36,6 +38,21 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 		return err
 	}
 
+	// CreatedAt resolution, in priority order:
+	//   1. existing stored value (preserve across updates)
+	//   2. caller-supplied non-zero value (import path)
+	//   3. now (fresh insert with no caller hint)
+	now := time.Now().UTC()
+	if existing != nil {
+		if prev, perr := parseTime(existing.frontmatter.CreatedAt); perr == nil && !prev.IsZero() {
+			t.CreatedAt = prev
+		}
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	t.UpdatedAt = now
+
 	tf := &taskFile{
 		frontmatter: frontmatter{
 			ID:            t.ID,
@@ -43,6 +60,8 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 			AssignedAgent: t.AssignedAgent,
 			DependsOn:     t.DependsOn,
 			PlanID:        t.PlanID,
+			CreatedAt:     t.CreatedAt.Format(time.RFC3339Nano),
+			UpdatedAt:     t.UpdatedAt.Format(time.RFC3339Nano),
 		},
 		subject:     t.Subject,
 		description: t.Description,
@@ -64,9 +83,8 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 	return taskFileToTask(tf)
 }
 
-// GetAll returns every task in the repository, sorted by numeric ID. Files
-// with non-numeric IDs (e.g. legacy or manually placed) sort before numeric
-// ones in lexicographic order.
+// GetAll returns every task in the repository, ordered by UpdatedAt
+// descending (most recently changed first). ID breaks ties.
 func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 	entries, err := os.ReadDir(filepath.Join(tr.dir, "tasks"))
 	if err != nil {
@@ -92,7 +110,10 @@ func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 		tasks = append(tasks, *t)
 	}
 	sort.SliceStable(tasks, func(i, j int) bool {
-		return idLess(tasks[i].ID, tasks[j].ID)
+		if !tasks[i].UpdatedAt.Equal(tasks[j].UpdatedAt) {
+			return tasks[i].UpdatedAt.After(tasks[j].UpdatedAt)
+		}
+		return tasks[i].ID < tasks[j].ID
 	})
 	return tasks, nil
 }
@@ -108,28 +129,28 @@ func idFromFilename(name string) string {
 	return stem
 }
 
-// idLess orders task IDs: numeric ascending, then non-numeric lexicographic
-// (non-numeric coming after — this only matters if someone manually places
-// a non-numeric file in tasks/).
-func idLess(a, b string) bool {
-	ai, aerr := strconv.Atoi(a)
-	bi, berr := strconv.Atoi(b)
-	switch {
-	case aerr == nil && berr == nil:
-		return ai < bi
-	case aerr == nil:
-		return true
-	case berr == nil:
-		return false
-	default:
-		return a < b
+// parseTime parses an RFC3339Nano timestamp from frontmatter. Returns a
+// zero time when s is empty so legacy files (predating timestamps) read as
+// zero-valued.
+func parseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
 	}
+	return time.Parse(time.RFC3339Nano, s)
 }
 
 func taskFileToTask(tf *taskFile) (*client.Task, error) {
 	state, err := client.ParseTaskState(tf.frontmatter.State)
 	if err != nil {
 		return nil, fmt.Errorf("parse state for task %q: %w", tf.frontmatter.ID, err)
+	}
+	createdAt, err := parseTime(tf.frontmatter.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at for task %q: %w", tf.frontmatter.ID, err)
+	}
+	updatedAt, err := parseTime(tf.frontmatter.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse updated_at for task %q: %w", tf.frontmatter.ID, err)
 	}
 	return &client.Task{
 		ID:            tf.frontmatter.ID,
@@ -139,6 +160,8 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 		AssignedAgent: tf.frontmatter.AssignedAgent,
 		DependsOn:     tf.frontmatter.DependsOn,
 		PlanID:        tf.frontmatter.PlanID,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}, nil
 }
 

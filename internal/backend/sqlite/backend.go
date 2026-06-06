@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/sn3d/tm/internal/client"
 	"github.com/sn3d/tm/internal/scope"
@@ -25,18 +24,9 @@ type backend struct {
 	cursors      *actorCursorsRepository
 }
 
-var allSchemas = []string{
-	tasksSchema,
-	commentsSchema,
-	plansSchema,
-	planCommentsSchema,
-	eventsSchema,
-	actorCursorsSchema,
-}
-
-// NewBackend opens (or creates) a SQLite database at dbPath, ensures all
-// schemas exist, and returns a Backend backed by it. Use ":memory:" for an
-// ephemeral in-memory store.
+// NewBackend opens (or creates) a SQLite database at dbPath, runs any
+// pending migrations, and returns a Backend backed by it. Use ":memory:"
+// for an ephemeral in-memory store.
 func NewBackend(dbPath string) (client.Backend, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -46,18 +36,9 @@ func NewBackend(dbPath string) (client.Backend, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
-	// Migrations run before schema creation: the tasks schema includes an
-	// index on plan_id, which would fail to create on a legacy table that
-	// predates the column.
-	if err := migrateTasksAddPlanID(db); err != nil {
+	if err := runMigrations(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("migrate tasks.plan_id: %w", err)
-	}
-	for _, schema := range allSchemas {
-		if _, err := db.Exec(schema); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("create schema: %w", err)
-		}
+		return nil, err
 	}
 	return &backend{
 		tasks:        &tasksRepository{db: db},
@@ -67,24 +48,6 @@ func NewBackend(dbPath string) (client.Backend, error) {
 		events:       &eventsRepository{db: db},
 		cursors:      &actorCursorsRepository{db: db},
 	}, nil
-}
-
-// migrateTasksAddPlanID adds the plan_id column to pre-existing tasks tables
-// created before the Plan entity existed. SQLite has no `ADD COLUMN IF NOT
-// EXISTS`, so we run the ALTER unconditionally and swallow:
-//   - "duplicate column" when an already-migrated DB is reopened
-//   - "no such table" on fresh DBs where the schema loop will create the
-//     up-to-date tasks table moments later
-func migrateTasksAddPlanID(db *sql.DB) error {
-	_, err := db.Exec(`ALTER TABLE tasks ADD COLUMN plan_id TEXT NOT NULL DEFAULT ''`)
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	if strings.Contains(msg, "duplicate column") || strings.Contains(msg, "no such table") {
-		return nil
-	}
-	return err
 }
 
 // NewBackendFromOptions is the map-keyed variant used by app.NewClient.

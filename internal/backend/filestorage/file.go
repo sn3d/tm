@@ -28,6 +28,8 @@ type frontmatter struct {
 	AssignedAgent string   `yaml:"assigned_agent"`
 	DependsOn     []string `yaml:"depends_on,omitempty"`
 	PlanID        string   `yaml:"plan_id,omitempty"`
+	CreatedAt     string   `yaml:"created_at,omitempty"`
+	UpdatedAt     string   `yaml:"updated_at,omitempty"`
 }
 
 const (

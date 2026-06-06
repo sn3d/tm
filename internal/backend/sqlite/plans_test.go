@@ -103,9 +103,12 @@ func TestPlansRepository_GetAll(t *testing.T) {
 	if len(got) != len(seed) {
 		t.Fatalf("expected %d plans, got %d", len(seed), len(got))
 	}
+	// GetAll orders by UpdatedAt DESC, so the most recently saved plan comes
+	// first — i.e. the reverse of insertion order here.
 	for i, p := range got {
-		if p.Subject != seed[i].Subject || p.AssignedAgent != seed[i].AssignedAgent {
-			t.Errorf("plan %d mismatch: got %+v, want %+v", i, p, seed[i])
+		want := seed[len(seed)-1-i]
+		if p.Subject != want.Subject || p.AssignedAgent != want.AssignedAgent {
+			t.Errorf("plan %d mismatch: got %+v, want %+v", i, p, want)
 		}
 	}
 }
@@ -138,5 +141,50 @@ func TestPlansRepository_Update(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Errorf("expected 1 row after update, got %d", len(all))
+	}
+}
+
+func TestPlansRepository_Save_StampsTimestamps(t *testing.T) {
+	repo := newTempPlansRepo(t)
+	plan := client.Plan{Subject: "stamps"}
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save (initial): %v", err)
+	}
+	if plan.CreatedAt.IsZero() || plan.UpdatedAt.IsZero() {
+		t.Fatalf("expected timestamps stamped, got CreatedAt=%v UpdatedAt=%v", plan.CreatedAt, plan.UpdatedAt)
+	}
+	created, firstUpdated := plan.CreatedAt, plan.UpdatedAt
+
+	time.Sleep(2 * time.Millisecond)
+	plan.Subject = "stamps v2"
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save (update): %v", err)
+	}
+	if !plan.CreatedAt.Equal(created) {
+		t.Errorf("CreatedAt should be preserved: got %v, want %v", plan.CreatedAt, created)
+	}
+	if !plan.UpdatedAt.After(firstUpdated) {
+		t.Errorf("UpdatedAt should advance: got %v, was %v", plan.UpdatedAt, firstUpdated)
+	}
+}
+
+// A caller-supplied non-zero CreatedAt on first insert (e.g. importing data
+// from another system) must be honored rather than overwritten with now.
+func TestPlansRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
+	repo := newTempPlansRepo(t)
+	want := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	plan := client.Plan{Subject: "imported", CreatedAt: want}
+	if err := repo.Save(&plan); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !plan.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt overwritten: got %v, want %v", plan.CreatedAt, want)
+	}
+	got, err := repo.GetByID(plan.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt did not round-trip: got %v, want %v", got.CreatedAt, want)
 	}
 }
