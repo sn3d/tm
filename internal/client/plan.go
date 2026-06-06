@@ -1,6 +1,9 @@
 package client
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type PlanID = string
 
@@ -10,13 +13,19 @@ type Plan struct {
 	Description   string
 	State         PlanState
 	AssignedAgent string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type PlansRepository interface {
 	// Save inserts a new plan or updates an existing one. When p.ID is empty
-	// the repository assigns a fresh ID and writes it back into p.ID.
+	// the repository assigns a fresh ID and writes it back into p.ID. The
+	// repository stamps p.CreatedAt on insert (preserved across updates) and
+	// p.UpdatedAt on every save, writing both back into the struct.
 	Save(p *Plan) (err error)
 	GetByID(id PlanID) (p *Plan, err error)
+	// GetAll returns every plan ordered by UpdatedAt descending (most
+	// recently changed first), with ID as a tiebreaker.
 	GetAll() (p []Plan, err error)
 }
 

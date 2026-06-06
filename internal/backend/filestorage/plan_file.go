@@ -24,6 +24,8 @@ type planFrontmatter struct {
 	ID            string `yaml:"id"`
 	State         string `yaml:"state"`
 	AssignedAgent string `yaml:"assigned_agent"`
+	CreatedAt     string `yaml:"created_at,omitempty"`
+	UpdatedAt     string `yaml:"updated_at,omitempty"`
 }
 
 // readPlanFile loads and parses a plan file by ID. Returns (nil, nil) if no

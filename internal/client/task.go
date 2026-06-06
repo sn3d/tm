@@ -1,6 +1,9 @@
 package client
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type TaskID = string
 
@@ -12,15 +15,22 @@ type Task struct {
 	AssignedAgent string
 	DependsOn     []TaskID
 	PlanID        PlanID // empty string => standalone task
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type TasksRepository interface {
-	// Save inserts or updates a task. When t.ID == 0 the repository assigns
-	// a new ID and writes it back into t.ID. When t.ID != 0 the existing
-	// row is replaced.
+	// Save inserts or updates a task. When t.ID is empty the repository
+	// assigns a new ID and writes it back into t.ID. When t.ID is set the
+	// existing row is replaced. The repository stamps t.CreatedAt on insert
+	// (preserved across updates) and t.UpdatedAt on every save, writing both
+	// back into the struct.
 	Save(t *Task) (err error)
 	GetByID(id TaskID) (t *Task, err error)
+	// GetAll returns every task ordered by UpdatedAt descending (most
+	// recently changed first), with ID as a tiebreaker.
 	GetAll() (t []Task, err error)
+	// GetByPlan returns tasks for the given plan, ordered like GetAll.
 	GetByPlan(planID PlanID) (t []Task, err error)
 }
 

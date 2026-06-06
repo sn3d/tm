@@ -12,6 +12,7 @@ type inboxView struct {
 	Actor         string      `json:"actor"`
 	Tasks         []taskView  `json:"tasks"`
 	Plans         []planView  `json:"plans"`
+	Resumable     []taskView  `json:"resumable"`
 	RecentChanges []eventView `json:"recent_changes"`
 	LastSeenAt    string      `json:"last_seen_at"`
 }
@@ -25,6 +26,10 @@ func viewInbox(b *client.Inbox) inboxView {
 	for i, p := range b.Plans {
 		plans[i] = viewPlan(p)
 	}
+	resumable := make([]taskView, len(b.Resumable))
+	for i, t := range b.Resumable {
+		resumable[i] = viewTask(t)
+	}
 	changes := make([]eventView, len(b.RecentChanges))
 	for i, e := range b.RecentChanges {
 		changes[i] = viewEvent(e)
@@ -37,6 +42,7 @@ func viewInbox(b *client.Inbox) inboxView {
 		Actor:         b.Actor,
 		Tasks:         tasks,
 		Plans:         plans,
+		Resumable:     resumable,
 		RecentChanges: changes,
 		LastSeenAt:    lastSeen,
 	}

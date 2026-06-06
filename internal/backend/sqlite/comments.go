@@ -8,15 +8,6 @@ import (
 	"github.com/sn3d/tm/internal/client"
 )
 
-const commentsSchema = `
-CREATE TABLE IF NOT EXISTS comments (
-	id      TEXT PRIMARY KEY,
-	task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-	who     TEXT NOT NULL DEFAULT '',
-	comment TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_comments_task_id ON comments(task_id);`
-
 type commentsRepository struct {
 	db *sql.DB
 }

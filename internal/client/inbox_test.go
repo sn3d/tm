@@ -54,18 +54,57 @@ func TestInbox_TasksFilteredByAssigneeAndCategory(t *testing.T) {
 	}
 }
 
-func TestInbox_TasksSortedNewestFirstByID(t *testing.T) {
+func TestInbox_TasksSortedNewestFirstByUpdatedAt(t *testing.T) {
 	b := newStubBackend()
-	for _, id := range []string{"T-1", "T-5", "T-3"} {
-		b.tasks.store[id] = &Task{ID: id, AssignedAgent: "alice", State: TaskStateTodo}
+	base := time.Unix(1000, 0).UTC()
+	for i, id := range []string{"T-1", "T-5", "T-3"} {
+		b.tasks.store[id] = &Task{
+			ID:            id,
+			AssignedAgent: "alice",
+			State:         TaskStateTodo,
+			UpdatedAt:     base.Add(time.Duration(i) * time.Second),
+		}
 	}
 	box, _ := New(b).Inbox("alice")
 	if len(box.Tasks) != 3 {
 		t.Fatalf("want 3 tasks, got %d", len(box.Tasks))
 	}
-	if box.Tasks[0].ID != "T-5" || box.Tasks[1].ID != "T-3" || box.Tasks[2].ID != "T-1" {
-		t.Errorf("sort order: got %v, want [T-5 T-3 T-1]",
+	if box.Tasks[0].ID != "T-3" || box.Tasks[1].ID != "T-5" || box.Tasks[2].ID != "T-1" {
+		t.Errorf("sort order: got %v, want [T-3 T-5 T-1]",
 			[]string{box.Tasks[0].ID, box.Tasks[1].ID, box.Tasks[2].ID})
+	}
+}
+
+func TestInbox_ResumableIsTasksUpdatedSinceLastSeen(t *testing.T) {
+	b := newStubBackend()
+	cutoff := time.Unix(1000, 0).UTC()
+	b.cursors.store["alice"] = cutoff
+
+	// Stale: updated before cutoff — assigned, active, but no news.
+	b.tasks.store["T-stale"] = &Task{
+		ID: "T-stale", AssignedAgent: "alice", State: TaskStateInProgress,
+		UpdatedAt: cutoff.Add(-time.Second),
+	}
+	// Fresh: updated after cutoff — should appear in Resumable.
+	b.tasks.store["T-fresh"] = &Task{
+		ID: "T-fresh", AssignedAgent: "alice", State: TaskStateBlocked,
+		UpdatedAt: cutoff.Add(time.Second),
+	}
+	// Not assigned to alice — must not appear even if fresh.
+	b.tasks.store["T-other"] = &Task{
+		ID: "T-other", AssignedAgent: "bob", State: TaskStateInProgress,
+		UpdatedAt: cutoff.Add(time.Second),
+	}
+
+	box, err := New(b).PeekInbox("alice")
+	if err != nil {
+		t.Fatalf("PeekInbox: %v", err)
+	}
+	if len(box.Resumable) != 1 {
+		t.Fatalf("want 1 resumable, got %d (%v)", len(box.Resumable), box.Resumable)
+	}
+	if box.Resumable[0].ID != "T-fresh" {
+		t.Errorf("got resumable %q, want T-fresh", box.Resumable[0].ID)
 	}
 }
 

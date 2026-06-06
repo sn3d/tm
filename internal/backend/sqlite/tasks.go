@@ -4,30 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/sn3d/tm/internal/client"
 )
-
-const tasksSchema = `
-CREATE TABLE IF NOT EXISTS tasks (
-	id             TEXT    PRIMARY KEY,
-	subject        TEXT    NOT NULL DEFAULT '',
-	description    TEXT    NOT NULL DEFAULT '',
-	state          TEXT    NOT NULL DEFAULT 'todo',
-	assigned_agent TEXT    NOT NULL DEFAULT '',
-	plan_id        TEXT    NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS task_deps (
-	task_id       TEXT NOT NULL,
-	depends_on_id TEXT NOT NULL,
-	PRIMARY KEY (task_id, depends_on_id),
-	FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_task_deps_task_id ON task_deps(task_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_plan_id ON tasks(plan_id);
-`
 
 type tasksRepository struct {
 	db *sql.DB
@@ -36,8 +16,10 @@ type tasksRepository struct {
 // Save inserts a new task or updates an existing one. When t.ID is empty the
 // next sequential ID from the shared task/plan counter is assigned and
 // written back into t.ID. When t.ID is set the existing row is replaced.
-// The dependency list is fully replaced (delete-then-insert) inside the
-// same transaction.
+// CreatedAt is stamped on insert and preserved on update; UpdatedAt is
+// refreshed on every save. Both timestamps are written back into t. The
+// dependency list is fully replaced (delete-then-insert) inside the same
+// transaction.
 func (tr *tasksRepository) Save(t *client.Task) error {
 	tx, err := tr.db.Begin()
 	if err != nil {
@@ -56,16 +38,36 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 		t.State = client.TaskStateDefault
 	}
 
+	// CreatedAt resolution, in priority order:
+	//   1. existing stored value (preserve across updates)
+	//   2. caller-supplied non-zero value (import path, or legacy row
+	//      whose stored column is '' getting a real timestamp)
+	//   3. now (fresh insert with no caller hint)
+	now := time.Now().UTC()
+	existing, err := loadTaskCreatedAt(tx, t.ID)
+	if err != nil {
+		return err
+	}
+	if existing != nil && !existing.IsZero() {
+		t.CreatedAt = *existing
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	t.UpdatedAt = now
+
 	const upsertTask = `
-		INSERT INTO tasks (id, subject, description, state, assigned_agent, plan_id)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, subject, description, state, assigned_agent, plan_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject        = excluded.subject,
 			description    = excluded.description,
 			state          = excluded.state,
 			assigned_agent = excluded.assigned_agent,
-			plan_id        = excluded.plan_id`
-	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.PlanID); err != nil {
+			plan_id        = excluded.plan_id,
+			updated_at     = excluded.updated_at`
+	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.PlanID,
+		t.CreatedAt.Format(time.RFC3339Nano), t.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("upsert task %q: %w", t.ID, err)
 	}
 
@@ -87,14 +89,40 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 	return nil
 }
 
+// loadTaskCreatedAt returns the existing created_at for a task ID within
+// the current transaction. Returns (nil, nil) when the row doesn't exist,
+// (&zero, nil) when the row exists with no stored timestamp (legacy rows
+// from before this column existed).
+func loadTaskCreatedAt(tx *sql.Tx, id client.TaskID) (*time.Time, error) {
+	var createdStr string
+	err := tx.QueryRow(`SELECT created_at FROM tasks WHERE id = ?`, id).Scan(&createdStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load created_at for task %q: %w", id, err)
+	}
+	if createdStr == "" {
+		zero := time.Time{}
+		return &zero, nil
+	}
+	ts, err := time.Parse(time.RFC3339Nano, createdStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at for task %q: %w", id, err)
+	}
+	return &ts, nil
+}
+
 // GetByID returns the task with the given ID, or (nil, nil) when no such row exists.
 func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id FROM tasks WHERE id = ?`
+	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at FROM tasks WHERE id = ?`
 	var (
-		t     client.Task
-		state string
+		t          client.Task
+		state      string
+		createdStr string
+		updatedStr string
 	)
-	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID)
+	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &createdStr, &updatedStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -106,6 +134,12 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 		return nil, fmt.Errorf("task %q: %w", id, err)
 	}
 	t.State = parsedState
+	if t.CreatedAt, err = parseSQLTime(createdStr); err != nil {
+		return nil, fmt.Errorf("parse created_at for task %q: %w", id, err)
+	}
+	if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
+		return nil, fmt.Errorf("parse updated_at for task %q: %w", id, err)
+	}
 	deps, err := tr.loadDeps(t.ID)
 	if err != nil {
 		return nil, err
@@ -114,11 +148,25 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 	return &t, nil
 }
 
-// GetAll returns every task in the repository, ordered by ID (ULID
-// lexicographic order, which is also creation order).
+// GetAll returns every task in the repository, ordered by UpdatedAt
+// descending (most recently changed first). ID breaks ties.
 func (tr *tasksRepository) GetAll() ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id FROM tasks ORDER BY id`
-	rows, err := tr.db.Query(q)
+	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at
+		FROM tasks ORDER BY updated_at DESC, id`
+	return tr.queryTasks(q)
+}
+
+// GetByPlan returns every task whose PlanID matches the given plan, ordered
+// by UpdatedAt descending. Returns an empty slice when no tasks reference
+// the plan.
+func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error) {
+	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at
+		FROM tasks WHERE plan_id = ? ORDER BY updated_at DESC, id`
+	return tr.queryTasks(q, planID)
+}
+
+func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, error) {
+	rows, err := tr.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query tasks: %w", err)
 	}
@@ -127,10 +175,12 @@ func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 	tasks := make([]client.Task, 0)
 	for rows.Next() {
 		var (
-			t     client.Task
-			state string
+			t          client.Task
+			state      string
+			createdStr string
+			updatedStr string
 		)
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID); err != nil {
+		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
 		parsedState, err := client.ParseTaskState(state)
@@ -138,6 +188,12 @@ func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 			return nil, fmt.Errorf("task %q: %w", t.ID, err)
 		}
 		t.State = parsedState
+		if t.CreatedAt, err = parseSQLTime(createdStr); err != nil {
+			return nil, fmt.Errorf("parse created_at for task %q: %w", t.ID, err)
+		}
+		if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
+			return nil, fmt.Errorf("parse updated_at for task %q: %w", t.ID, err)
+		}
 		tasks = append(tasks, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -153,43 +209,13 @@ func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 	return tasks, nil
 }
 
-// GetByPlan returns every task whose PlanID matches the given plan, ordered
-// by ID. Returns an empty slice when no tasks reference the plan.
-func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id FROM tasks WHERE plan_id = ? ORDER BY id`
-	rows, err := tr.db.Query(q, planID)
-	if err != nil {
-		return nil, fmt.Errorf("query tasks for plan %q: %w", planID, err)
+// parseSQLTime parses an RFC3339Nano timestamp from a TEXT column. An empty
+// string (from legacy rows predating the column) becomes zero time.
+func parseSQLTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
 	}
-	defer rows.Close()
-
-	tasks := make([]client.Task, 0)
-	for rows.Next() {
-		var (
-			t     client.Task
-			state string
-		)
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID); err != nil {
-			return nil, fmt.Errorf("scan task row: %w", err)
-		}
-		parsedState, err := client.ParseTaskState(state)
-		if err != nil {
-			return nil, fmt.Errorf("task %q: %w", t.ID, err)
-		}
-		t.State = parsedState
-		tasks = append(tasks, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate task rows: %w", err)
-	}
-	for i := range tasks {
-		deps, err := tr.loadDeps(tasks[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		tasks[i].DependsOn = deps
-	}
-	return tasks, nil
+	return time.Parse(time.RFC3339Nano, s)
 }
 
 func (tr *tasksRepository) loadDeps(id client.TaskID) ([]client.TaskID, error) {

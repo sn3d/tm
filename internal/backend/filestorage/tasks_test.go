@@ -116,7 +116,8 @@ func TestTasksRepository_GetAll(t *testing.T) {
 	// Act
 	got, err := repo.GetAll()
 
-	// Assert
+	// Assert: GetAll orders by UpdatedAt DESC, so the most recently saved
+	// task comes first — i.e. the reverse of insertion order here.
 	if err != nil {
 		t.Fatalf("GetAll: %v", err)
 	}
@@ -124,8 +125,9 @@ func TestTasksRepository_GetAll(t *testing.T) {
 		t.Fatalf("expected %d tasks, got %d", len(seed), len(got))
 	}
 	for i, task := range got {
-		if task.Subject != seed[i].Subject || task.AssignedAgent != seed[i].AssignedAgent {
-			t.Errorf("task %d mismatch: got %+v, want %+v", i, task, seed[i])
+		want := seed[len(seed)-1-i]
+		if task.Subject != want.Subject || task.AssignedAgent != want.AssignedAgent {
+			t.Errorf("task %d mismatch: got %+v, want %+v", i, task, want)
 		}
 	}
 }
@@ -430,5 +432,123 @@ assigned_agent: alice
 	}
 	if _, err := b.Tasks().GetByID("corrupt"); err == nil {
 		t.Fatal("expected error loading task with unknown state, got nil")
+	}
+}
+
+// Save stamps CreatedAt and UpdatedAt on first save, then preserves CreatedAt
+// while refreshing UpdatedAt on subsequent saves.
+func TestTasksRepository_Save_StampsTimestamps(t *testing.T) {
+	repo := newTempRepo(t)
+	task := client.Task{Subject: "stamps"}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save (initial): %v", err)
+	}
+	if task.CreatedAt.IsZero() || task.UpdatedAt.IsZero() {
+		t.Fatalf("expected timestamps stamped, got CreatedAt=%v UpdatedAt=%v", task.CreatedAt, task.UpdatedAt)
+	}
+	created, firstUpdated := task.CreatedAt, task.UpdatedAt
+
+	time.Sleep(2 * time.Millisecond)
+	task.Subject = "stamps v2"
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save (update): %v", err)
+	}
+	if !task.CreatedAt.Equal(created) {
+		t.Errorf("CreatedAt should be preserved: got %v, want %v", task.CreatedAt, created)
+	}
+	if !task.UpdatedAt.After(firstUpdated) {
+		t.Errorf("UpdatedAt should advance: got %v, was %v", task.UpdatedAt, firstUpdated)
+	}
+
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.CreatedAt.Equal(task.CreatedAt) || !got.UpdatedAt.Equal(task.UpdatedAt) {
+		t.Errorf("timestamps did not round-trip: got %+v, want CreatedAt=%v UpdatedAt=%v",
+			got, task.CreatedAt, task.UpdatedAt)
+	}
+}
+
+// GetAll orders by UpdatedAt DESC. Touching an older task should push it to
+// the front of the list.
+func TestTasksRepository_GetAll_OrdersByUpdatedAtDesc(t *testing.T) {
+	repo := newTempRepo(t)
+	first := client.Task{Subject: "first"}
+	if err := repo.Save(&first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	second := client.Task{Subject: "second"}
+	if err := repo.Save(&second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	// Re-save first; it should now be the most recently updated.
+	if err := repo.Save(&first); err != nil {
+		t.Fatalf("re-save first: %v", err)
+	}
+
+	got, err := repo.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	if len(got) != 2 || got[0].Subject != "first" || got[1].Subject != "second" {
+		t.Errorf("expected [first, second], got %+v", got)
+	}
+}
+
+// A caller-supplied non-zero CreatedAt on first insert (e.g. importing data
+// from another system) must be honored rather than overwritten with now.
+func TestTasksRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
+	repo := newTempRepo(t)
+	want := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	task := client.Task{Subject: "imported", CreatedAt: want}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !task.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt overwritten: got %v, want %v", task.CreatedAt, want)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt did not round-trip: got %v, want %v", got.CreatedAt, want)
+	}
+}
+
+// Legacy task files written before the timestamp columns existed must parse
+// cleanly with zero-valued CreatedAt/UpdatedAt.
+func TestTasksRepository_ParsesLegacyFile_WithoutTimestamps(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+
+	legacyPath := filepath.Join(dir, "tasks", "legacy-ts.md")
+	legacyContent := `---
+id: legacy-ts
+state: todo
+assigned_agent: alice
+---
+
+# legacy task
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+
+	got, err := b.Tasks().GetByID("legacy-ts")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected legacy task to load")
+	}
+	if !got.CreatedAt.IsZero() || !got.UpdatedAt.IsZero() {
+		t.Errorf("expected zero timestamps for legacy task, got CreatedAt=%v UpdatedAt=%v", got.CreatedAt, got.UpdatedAt)
 	}
 }

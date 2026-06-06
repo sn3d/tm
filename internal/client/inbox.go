@@ -11,10 +11,23 @@ import (
 // changed since I last looked". Tasks and Plans are the current open/active
 // items assigned to the actor; RecentChanges is the slice of journal events
 // touching those items (or reassignments TO the actor) since LastSeenAt.
+// Resumable is the subset of Tasks whose UpdatedAt is after LastSeenAt —
+// i.e. tasks the agent owns that changed since the last heartbeat (typically
+// a reply on a blocked task or a reassignment back).
+//
+// Handoff model — no unread bits, no per-event read state. Work moves
+// between actors via two coupled changes on the task: set the next state
+// (e.g. in_review, blocked) AND reassign to whoever should act next. The
+// task then leaves the previous owner's inbox (different assignee) and
+// appears in the new owner's inbox; on the new owner's next heartbeat it
+// also lands in Resumable because UpdatedAt advanced past their LastSeenAt.
+// Terminal states (done, cancelled) drop the task from any inbox via the
+// category filter.
 type Inbox struct {
 	Actor         string
 	Tasks         []Task
 	Plans         []Plan
+	Resumable     []Task
 	RecentChanges []Event
 	LastSeenAt    time.Time
 }
@@ -67,9 +80,22 @@ func (c *Client) inbox(actor string, advance bool) (*Inbox, error) {
 		Actor:         actor,
 		Tasks:         tasks,
 		Plans:         plans,
+		Resumable:     resumableTasks(tasks, lastSeen),
 		RecentChanges: changes,
 		LastSeenAt:    lastSeen,
 	}, nil
+}
+
+// resumableTasks picks the tasks the actor owns that changed since their
+// last heartbeat. Order is inherited from `tasks` (UpdatedAt desc, ID tie).
+func resumableTasks(tasks []Task, lastSeen time.Time) []Task {
+	out := make([]Task, 0, len(tasks))
+	for _, t := range tasks {
+		if t.UpdatedAt.After(lastSeen) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (c *Client) assignedTasks(actor string) ([]Task, error) {
@@ -87,7 +113,12 @@ func (c *Client) assignedTasks(actor string) ([]Task, error) {
 			out = append(out, t)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 
@@ -106,7 +137,12 @@ func (c *Client) assignedPlans(actor string) ([]Plan, error) {
 			out = append(out, p)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 

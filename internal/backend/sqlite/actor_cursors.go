@@ -7,13 +7,6 @@ import (
 	"time"
 )
 
-const actorCursorsSchema = `
-CREATE TABLE IF NOT EXISTS actor_cursors (
-	actor        TEXT PRIMARY KEY,
-	last_seen_at TEXT NOT NULL
-);
-`
-
 type actorCursorsRepository struct {
 	db *sql.DB
 }
