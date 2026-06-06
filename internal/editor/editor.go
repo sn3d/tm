@@ -19,49 +19,31 @@ import (
 // prefilled a description. If the saved body matches it byte-for-byte (after
 // trimming), we treat the description as empty. A user who legitimately types
 // this exact string gets an empty description — accepted footgun.
-const (
-	descriptionPlaceholder     = "Describe the task here..."
-	planDescriptionPlaceholder = "Describe the plan here..."
-)
+const descriptionPlaceholder = "Describe the task here..."
 
 // ErrNotTerminal is returned by EditTaskDraft when stdin is not a TTY, so
 // scripted invocations get a clear error instead of a hung `vi`.
 var ErrNotTerminal = errors.New("cannot open editor: stdin is not a terminal")
 
 // TaskDraft is the result of an editor session: the fields the user filled
-// into the template, ready to pass to Client.Create or Client.Edit. State
-// is a free-form string here so this package stays independent of client.
+// into the template, ready to pass to Client.CreateTask or Client.EditTask.
+// State is a free-form string here so this package stays independent of
+// client.
 type TaskDraft struct {
 	Subject     string
 	Description string
 	Assigned    string
 	State       string
 	DependsOn   []string
-	Plan        string
+	Parent      string
 }
 
 type frontmatter struct {
 	Subject   string   `yaml:"subject"`
 	Assigned  string   `yaml:"assigned"`
-	Plan      string   `yaml:"plan,omitempty"`
+	Parent    string   `yaml:"parent,omitempty"`
 	State     string   `yaml:"state,omitempty"`
 	DependsOn []string `yaml:"depends_on,omitempty"`
-}
-
-// PlanDraft is the result of an editor session for a plan: the fields the user
-// filled into the template, ready to pass to Client.CreatePlan or
-// Client.EditPlan. Mirrors TaskDraft but without dependencies or plan ref.
-type PlanDraft struct {
-	Subject     string
-	Description string
-	Assigned    string
-	State       string
-}
-
-type planFrontmatter struct {
-	Subject  string `yaml:"subject"`
-	Assigned string `yaml:"assigned"`
-	State    string `yaml:"state,omitempty"`
 }
 
 // EditTaskDraft writes a markdown template prefilled with `prefill`, launches
@@ -116,7 +98,7 @@ func renderTemplate(d TaskDraft) string {
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "subject: %s\n", d.Subject)
 	fmt.Fprintf(&b, "assigned: %s\n", d.Assigned)
-	fmt.Fprintf(&b, "plan: %q\n", d.Plan)
+	fmt.Fprintf(&b, "parent: %q\n", d.Parent)
 	if d.State != "" {
 		fmt.Fprintf(&b, "state: %s\n", d.State)
 	}
@@ -204,97 +186,6 @@ func parseTemplate(content []byte) (TaskDraft, error) {
 		Assigned:    strings.TrimSpace(fm.Assigned),
 		State:       strings.TrimSpace(fm.State),
 		DependsOn:   deps,
-		Plan:        strings.TrimSpace(fm.Plan),
-	}, nil
-}
-
-// EditPlanDraft writes a markdown template prefilled with `prefill`, launches
-// the user's editor against it, and returns the parsed plan result. Mirrors
-// EditTaskDraft. Returns ErrNotTerminal if stdin isn't a TTY.
-func EditPlanDraft(prefill PlanDraft) (PlanDraft, error) {
-	if !stdinIsTerminal() {
-		return PlanDraft{}, ErrNotTerminal
-	}
-
-	f, err := os.CreateTemp("", "tm-plan-*.md")
-	if err != nil {
-		return PlanDraft{}, fmt.Errorf("create temp file: %w", err)
-	}
-	path := f.Name()
-	defer os.Remove(path)
-
-	if _, err := f.WriteString(renderPlanTemplate(prefill)); err != nil {
-		f.Close()
-		return PlanDraft{}, fmt.Errorf("write template: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return PlanDraft{}, fmt.Errorf("close template: %w", err)
-	}
-
-	if err := runEditor(path); err != nil {
-		return PlanDraft{}, err
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return PlanDraft{}, fmt.Errorf("read saved template: %w", err)
-	}
-	return parsePlanTemplate(content)
-}
-
-func renderPlanTemplate(d PlanDraft) string {
-	description := d.Description
-	if description == "" {
-		description = planDescriptionPlaceholder
-	}
-	var b strings.Builder
-	b.WriteString("---\n")
-	fmt.Fprintf(&b, "subject: %s\n", d.Subject)
-	fmt.Fprintf(&b, "assigned: %s\n", d.Assigned)
-	if d.State != "" {
-		fmt.Fprintf(&b, "state: %s\n", d.State)
-	}
-	b.WriteString("---\n")
-	b.WriteString(description)
-	b.WriteString("\n")
-	return b.String()
-}
-
-func parsePlanTemplate(content []byte) (PlanDraft, error) {
-	const fence = "---"
-	normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
-	rest, ok := bytes.CutPrefix(bytes.TrimLeft(normalized, " \t\n"), []byte(fence))
-	if !ok {
-		return PlanDraft{}, fmt.Errorf("missing opening frontmatter fence %q", fence)
-	}
-	rest = bytes.TrimLeft(rest, " \t\n")
-	fmYAML, afterFence, ok := bytes.Cut(rest, []byte("\n"+fence))
-	if !ok {
-		return PlanDraft{}, fmt.Errorf("missing closing frontmatter fence %q", fence)
-	}
-	body := afterFence
-	if i := bytes.IndexByte(body, '\n'); i >= 0 {
-		body = body[i+1:]
-	} else {
-		body = nil
-	}
-
-	var fm planFrontmatter
-	if err := yaml.Unmarshal(fmYAML, &fm); err != nil {
-		return PlanDraft{}, fmt.Errorf("parse frontmatter: %w", err)
-	}
-	description := strings.TrimSpace(string(body))
-	if description == planDescriptionPlaceholder {
-		description = ""
-	}
-	subject := strings.TrimSpace(fm.Subject)
-	if subject == "" {
-		return PlanDraft{}, fmt.Errorf("subject is required")
-	}
-	return PlanDraft{
-		Subject:     subject,
-		Description: description,
-		Assigned:    strings.TrimSpace(fm.Assigned),
-		State:       strings.TrimSpace(fm.State),
+		Parent:      strings.TrimSpace(fm.Parent),
 	}, nil
 }

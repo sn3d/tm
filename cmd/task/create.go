@@ -65,8 +65,12 @@ var createCmd = &cli.Command{
 		description := command.String("description")
 		assigned := command.String("assigned")
 		dependsOn := parseDependsOn(command.String("depends-on"))
-		plan := command.String("plan")
+		// --plan is the legacy alias for --parent. Resolve up-front so the
+		// editor template and CreateTaskInput see a single value.
 		parent := command.String("parent")
+		if parent == "" {
+			parent = command.String("plan")
+		}
 		labels := parseLabels(command.String("labels"))
 		mode, err := client.ParseTaskMode(command.String("mode"))
 		if err != nil {
@@ -79,7 +83,7 @@ var createCmd = &cli.Command{
 				Description: description,
 				Assigned:    assigned,
 				DependsOn:   dependsOn,
-				Plan:        plan,
+				Parent:      parent,
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("--subject is required when not running in a terminal")
@@ -94,14 +98,9 @@ var createCmd = &cli.Command{
 			description = draft.Description
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
-			plan = draft.Plan
+			parent = draft.Parent
 		}
 
-		// --plan is the legacy alias for --parent; both target ParentID on the
-		// unified task entity.
-		if parent == "" {
-			parent = plan
-		}
 		id, err := c.CreateTask(client.CreateTaskInput{
 			Subject:       subject,
 			Description:   description,

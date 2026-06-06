@@ -16,11 +16,10 @@ type tasksRepository struct {
 }
 
 // Save creates or updates the task file. When t.ID is empty the next
-// sequential ID from the shared task/plan counter is assigned and written
-// back into t.ID. CreatedAt is stamped on first save and preserved on
-// updates; UpdatedAt is refreshed on every save. Both fields are written
-// back into t. Existing comments on the file (if any) are preserved across
-// updates.
+// sequential numeric ID is assigned and written back into t.ID. CreatedAt
+// is stamped on first save and preserved on updates; UpdatedAt is refreshed
+// on every save. Both fields are written back into t. Existing comments on
+// the file (if any) are preserved across updates.
 func (tr *tasksRepository) Save(t *client.Task) error {
 	if t.ID == "" {
 		next, err := nextSharedNumericID(tr.dir)

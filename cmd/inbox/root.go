@@ -66,7 +66,7 @@ func printTasks(tasks []client.Task) {
 	for _, t := range tasks {
 		parent := tui.Dash(t.ParentID)
 		if t.ParentID != "" {
-			parent = tui.Truncate(t.ParentID, tui.ColPlanWidth-2)
+			parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
 		}
 		printTaskRow(
 			t.ID,

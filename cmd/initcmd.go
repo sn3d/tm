@@ -19,7 +19,7 @@ var initCmd = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "cwd",
-			Usage: "Use filestorage and store markdown task/plan files in ./.tm/ instead of a sqlite database in ~/.tm/projects/",
+			Usage: "Use filestorage and store markdown task files in ./.tm/ instead of a sqlite database in ~/.tm/projects/",
 		},
 	},
 	Action: func(_ context.Context, cmd *cli.Command) error {
@@ -35,8 +35,8 @@ var initCmd = &cli.Command{
 	},
 }
 
-// initCwd creates ./.tm/tasks and ./.tm/plans in cwd and writes a
-// taskmanager.yaml marker selecting the filestorage backend.
+// initCwd creates ./.tm/tasks in cwd and writes a taskmanager.yaml marker
+// selecting the filestorage backend.
 func initCwd(cwd string) error {
 	dataDir := filepath.Join(cwd, scope.ProjectDataDir)
 	already := dirExists(dataDir)
@@ -75,9 +75,6 @@ func initHome(cwd string) error {
 func ensureFilestorageDirs(dataDir string) error {
 	if err := os.MkdirAll(filepath.Join(dataDir, "tasks"), 0o755); err != nil {
 		return fmt.Errorf("create tasks dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "plans"), 0o755); err != nil {
-		return fmt.Errorf("create plans dir: %w", err)
 	}
 	return nil
 }

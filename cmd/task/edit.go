@@ -102,7 +102,7 @@ var editCmd = &cli.Command{
 				Assigned:    assigned,
 				State:       state.String(),
 				DependsOn:   dependsOn,
-				Plan:        parentID,
+				Parent:      parentID,
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("specify at least one field flag when not running in a terminal")
@@ -117,7 +117,7 @@ var editCmd = &cli.Command{
 			description = draft.Description
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
-			parentID = draft.Plan
+			parentID = draft.Parent
 			if draft.State != "" {
 				state, err = client.ParseTaskState(draft.State)
 				if err != nil {

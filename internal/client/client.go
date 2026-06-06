@@ -52,10 +52,9 @@ func (c *Client) As(actor string) *Client {
 }
 
 // CreateTask adds a new task. The new task starts in TaskStateDefault (todo).
-// Validation: DependsOn entries must reference existing tasks; PlanID, when
-// non-empty, must reference an existing plan; ParentID, when non-empty, must
-// reference an existing task. The repository assigns the ID, which is
-// returned.
+// Validation: DependsOn entries must reference existing tasks; ParentID,
+// when non-empty, must reference an existing task. The repository assigns
+// the ID, which is returned.
 func (c *Client) CreateTask(in CreateTaskInput) (TaskID, error) {
 	if err := c.validateDependencies("", in.DependsOn); err != nil {
 		return "", err

@@ -84,7 +84,7 @@ func targetLabel(e client.Event) string {
 	return "-"
 }
 
-// verbFromKind strips the "task." / "plan." prefix so the column reads
+// verbFromKind strips the "task." prefix so the column reads
 // "state_changed" rather than "task.state_changed" — the target column
 // already shows which entity it is.
 func verbFromKind(k client.EventKind) string {

@@ -57,7 +57,7 @@ var listCmd = &cli.Command{
 			}
 			parent := tui.Dash(t.ParentID)
 			if t.ParentID != "" {
-				parent = tui.Truncate(t.ParentID, tui.ColPlanWidth-2)
+				parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
 			}
 			printRow(
 				t.ID,

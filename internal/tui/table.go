@@ -11,7 +11,7 @@ const (
 	ColSubjectWidth = 32
 	ColStateWidth   = 16
 	ColAgentWidth   = 18
-	ColPlanWidth    = 14
+	ColParentWidth  = 14
 )
 
 var (
