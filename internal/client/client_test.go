@@ -233,7 +233,7 @@ func (b *stubBackend) seedPlan(id PlanID) {
 
 func TestCreate_NoDeps(t *testing.T) {
 	c := New(newStubBackend())
-	id, err := c.CreateTask("s", "d", "alice", nil, "")
+	id, err := c.CreateTask(CreateTaskInput{Subject: "s", Description: "d", AssignedAgent: "alice"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestCreate_NoDeps(t *testing.T) {
 
 func TestCreate_DepMustExist(t *testing.T) {
 	c := New(newStubBackend())
-	_, err := c.CreateTask("s", "", "", []TaskID{"missing"}, "")
+	_, err := c.CreateTask(CreateTaskInput{Subject: "s", DependsOn: []TaskID{"missing"}})
 	var nfe *NotFoundError
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected NotFoundError, got %v", err)
@@ -260,7 +260,7 @@ func TestCreate_AcceptsExistingDeps(t *testing.T) {
 	b.seed("2")
 	c := New(b)
 
-	id, err := c.CreateTask("s", "", "", []TaskID{"1", "2"}, "")
+	id, err := c.CreateTask(CreateTaskInput{Subject: "s", DependsOn: []TaskID{"1", "2"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestCreate_RejectsDuplicateDeps(t *testing.T) {
 	b.seed("1")
 	c := New(b)
 
-	_, err := c.CreateTask("s", "", "", []TaskID{"1", "1"}, "")
+	_, err := c.CreateTask(CreateTaskInput{Subject: "s", DependsOn: []TaskID{"1", "1"}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("expected duplicate-dependency error, got %v", err)
 	}
@@ -283,7 +283,7 @@ func TestCreate_RejectsDuplicateDeps(t *testing.T) {
 
 func TestCreate_RejectsEmptyDep(t *testing.T) {
 	c := New(newStubBackend())
-	_, err := c.CreateTask("s", "", "", []TaskID{""}, "")
+	_, err := c.CreateTask(CreateTaskInput{Subject: "s", DependsOn: []TaskID{""}})
 	if err == nil {
 		t.Fatal("expected error for empty dependency, got nil")
 	}
@@ -294,7 +294,7 @@ func TestUpdate_RejectsSelfDependency(t *testing.T) {
 	b.seed("1")
 	c := New(b)
 
-	err := c.EditTask("1", "s", "", TaskStateTodo, "", []TaskID{"1"}, "")
+	err := c.EditTask("1", EditTaskInput{Subject: "s", State: TaskStateTodo, DependsOn: []TaskID{"1"}})
 	if err == nil || !strings.Contains(err.Error(), "cannot depend on itself") {
 		t.Fatalf("expected self-dependency error, got %v", err)
 	}
@@ -307,7 +307,7 @@ func TestUpdate_DetectsDirectCycle(t *testing.T) {
 	c := New(b)
 
 	// Adding 1 -> 2 closes the loop (1 -> 2 -> 1).
-	err := c.EditTask("1", "s", "", TaskStateTodo, "", []TaskID{"2"}, "")
+	err := c.EditTask("1", EditTaskInput{Subject: "s", State: TaskStateTodo, DependsOn: []TaskID{"2"}})
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
@@ -321,7 +321,7 @@ func TestUpdate_DetectsTransitiveCycle(t *testing.T) {
 	c := New(b)
 
 	// 1 -> 3 -> 2 -> 1 is a cycle.
-	err := c.EditTask("1", "s", "", TaskStateTodo, "", []TaskID{"3"}, "")
+	err := c.EditTask("1", EditTaskInput{Subject: "s", State: TaskStateTodo, DependsOn: []TaskID{"3"}})
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected transitive cycle error, got %v", err)
 	}
@@ -333,7 +333,7 @@ func TestUpdate_AllowsBreakingExistingDependency(t *testing.T) {
 	b.seed("2", "1")
 	c := New(b)
 
-	if err := c.EditTask("2", "s", "", TaskStateTodo, "", nil, ""); err != nil {
+	if err := c.EditTask("2", EditTaskInput{Subject: "s", State: TaskStateTodo}); err != nil {
 		t.Fatalf("clearing deps should succeed, got %v", err)
 	}
 	got, _ := c.GetTask("2")
@@ -348,7 +348,7 @@ func TestUpdate_PreservesDepsWhenUnchanged(t *testing.T) {
 	b.seed("2", "1")
 	c := New(b)
 
-	if err := c.EditTask("2", "new subject", "", TaskStateTodo, "", []TaskID{"1"}, ""); err != nil {
+	if err := c.EditTask("2", EditTaskInput{Subject: "new subject", State: TaskStateTodo, DependsOn: []TaskID{"1"}}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got, _ := c.GetTask("2")

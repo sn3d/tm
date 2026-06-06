@@ -33,7 +33,7 @@ var editCmd = &cli.Command{
 		},
 		&cli.StringFlag{
 			Name:  "state",
-			Usage: "State to set: todo | in_progress | blocked | in_review | done | cancelled",
+			Usage: "State to set: draft | todo | in_progress | blocked | in_review | done | cancelled",
 		},
 		&cli.StringFlag{
 			Name:  "assigned",
@@ -45,7 +45,19 @@ var editCmd = &cli.Command{
 		},
 		&cli.StringFlag{
 			Name:  "plan",
-			Usage: `Plan ID this task belongs to. Pass --plan "" to clear.`,
+			Usage: `Plan ID this task belongs to. Pass --plan "" to clear. DEPRECATED — use --parent.`,
+		},
+		&cli.StringFlag{
+			Name:  "parent",
+			Usage: `Parent task ID. Pass --parent "" to make top-level.`,
+		},
+		&cli.StringFlag{
+			Name:  "labels",
+			Usage: `Replacement comma-separated labels. Pass --labels "" to clear.`,
+		},
+		&cli.StringFlag{
+			Name:  "mode",
+			Usage: "Render/filter hint: standard | planning",
 		},
 		app.ActorFlag,
 	},
@@ -69,13 +81,19 @@ var editCmd = &cli.Command{
 		assigned := t.AssignedAgent
 		dependsOn := t.DependsOn
 		planID := t.PlanID
+		parentID := t.ParentID
+		labels := t.Labels
+		mode := t.Mode
 
 		interactive := !command.IsSet("subject") &&
 			!command.IsSet("description") &&
 			!command.IsSet("state") &&
 			!command.IsSet("assigned") &&
 			!command.IsSet("depends-on") &&
-			!command.IsSet("plan")
+			!command.IsSet("plan") &&
+			!command.IsSet("parent") &&
+			!command.IsSet("labels") &&
+			!command.IsSet("mode")
 
 		if interactive {
 			// this section is executed as 'interactive' mode
@@ -130,9 +148,31 @@ var editCmd = &cli.Command{
 			if command.IsSet("plan") {
 				planID = command.String("plan")
 			}
+			if command.IsSet("parent") {
+				parentID = command.String("parent")
+			}
+			if command.IsSet("labels") {
+				labels = parseLabels(command.String("labels"))
+			}
+			if command.IsSet("mode") {
+				mode, err = client.ParseTaskMode(command.String("mode"))
+				if err != nil {
+					return err
+				}
+			}
 		}
 
-		if err := c.EditTask(id, subject, description, state, assigned, dependsOn, planID); err != nil {
+		if err := c.EditTask(id, client.EditTaskInput{
+			Subject:       subject,
+			Description:   description,
+			State:         state,
+			AssignedAgent: assigned,
+			DependsOn:     dependsOn,
+			PlanID:        planID,
+			ParentID:      parentID,
+			Labels:        labels,
+			Mode:          mode,
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("%s Edited task %s\n", color.GreenString("✓"), color.New(color.Bold).Sprint(id))

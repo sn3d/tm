@@ -24,6 +24,14 @@ func joinPlanStates() string {
 	return strings.Join(parts, " | ")
 }
 
+func joinTaskModes() string {
+	parts := make([]string, len(client.TaskModes))
+	for i, m := range client.TaskModes {
+		parts[i] = string(m)
+	}
+	return strings.Join(parts, " | ")
+}
+
 const serverName = "tm"
 const serverVersion = "0.1.0"
 
@@ -54,15 +62,23 @@ func (s *Server) ServeStdio() error {
 func (s *Server) registerTools() {
 	s.mcp.AddTool(
 		mcp.NewTool("task_create",
-			mcp.WithDescription("Create a new task. Returns the assigned task ID."),
+			mcp.WithDescription(`Create a new task. Returns the assigned task ID.
+
+Hierarchy: pass `+"`parent_id`"+` to create a child task. Top-level tasks (parent_id="") are the roots; a task with `+"`mode=planning`"+` typically serves as a plan with children under it. Use task_list with parent_id to enumerate children.`),
 			mcp.WithString("subject", mcp.Description("Short title of the task."), mcp.Required()),
 			mcp.WithString("description", mcp.Description("Longer description of the task. Optional.")),
 			mcp.WithString("assigned_agent", mcp.Description("Name of the agent the task is assigned to. Optional.")),
 			mcp.WithArray("depends_on",
-				mcp.Description("IDs of existing tasks this task depends on. Optional."),
+				mcp.Description("IDs of existing tasks this task BLOCKS ON (different concept from parent_id: depends_on = \"can't start until these are done\"; parent_id = \"belongs under\"). Optional."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("ID of the plan this task belongs to. Optional.")),
+			mcp.WithString("plan_id", mcp.Description("DEPRECATED: use parent_id. Kept until the plan entity is fully removed.")),
+			mcp.WithString("parent_id", mcp.Description("ID of an existing task to use as the parent in the hierarchy. Optional. Empty (or omitted) = top-level task.")),
+			mcp.WithArray("labels",
+				mcp.Description("Labels to tag the task with (e.g. \"bug\", \"chore\", \"area:auth\"). Optional. Use for informal categorization; filter with task_list label=<name>."),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
+			mcp.WithString("mode", mcp.Description("Render/filter hint: "+joinTaskModes()+". Default standard. Set to `planning` for tasks that represent a plan (typically with children under them). No workflow difference between modes.")),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskCreate,
@@ -96,7 +112,13 @@ Typical handoffs:
 				mcp.Description("Replacement dependency list (existing task IDs). Pass [] to clear; omit to leave unchanged."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("New plan ID. Pass empty string to unassign from any plan. Omit to leave unchanged.")),
+			mcp.WithString("plan_id", mcp.Description("DEPRECATED: use parent_id. Pass empty string to unassign from any plan. Omit to leave unchanged.")),
+			mcp.WithString("parent_id", mcp.Description("New parent task ID. Pass empty string to make this a top-level task. Omit to leave unchanged. Cannot reference the task itself.")),
+			mcp.WithArray("labels",
+				mcp.Description("Replacement label list. Pass [] to clear; omit to leave unchanged."),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
+			mcp.WithString("mode", mcp.Description("New mode: "+joinTaskModes()+". Omit to leave unchanged. Affects rendering/filtering only; no workflow impact.")),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal events. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskEdit,
@@ -104,8 +126,12 @@ Typical handoffs:
 
 	s.mcp.AddTool(
 		mcp.NewTool("task_list",
-			mcp.WithDescription("List all tasks. Optionally filter by plan."),
-			mcp.WithString("plan_id", mcp.Description(`Filter tasks by plan ID. Pass an empty string to list only standalone tasks (no plan). Omit to list all tasks.`)),
+			mcp.WithDescription(`List tasks. Without filters returns every task. Filters are evaluated in this order: parent_id / plan_id / no_parent pick the base set; mode and label further narrow that set.`),
+			mcp.WithString("plan_id", mcp.Description(`DEPRECATED: use parent_id. Filter tasks by plan ID. Pass an empty string to list only standalone tasks (no plan). Omit to ignore.`)),
+			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Omit to ignore. Use no_parent=true for top-level tasks.`)),
+			mcp.WithBoolean("no_parent", mcp.Description(`If true, list only top-level tasks (parent_id=""). Combine with mode=planning to list plans.`)),
+			mcp.WithString("mode", mcp.Description(`Filter by mode: `+joinTaskModes()+`. Omit to ignore.`)),
+			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). Omit to ignore.`)),
 		),
 		s.handleTaskList,
 	)

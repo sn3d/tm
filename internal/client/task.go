@@ -66,6 +66,37 @@ func ParseTaskMode(s string) (TaskMode, error) {
 	return m, nil
 }
 
+// CreateTaskInput is the parameter bag for Client.CreateTask. Optional
+// fields take their zero value's natural meaning: empty AssignedAgent =
+// unassigned, empty PlanID/ParentID = standalone/top-level, nil DependsOn
+// = no deps, nil Labels = no labels, empty Mode = TaskModeDefault.
+type CreateTaskInput struct {
+	Subject       string
+	Description   string
+	AssignedAgent string
+	DependsOn     []TaskID
+	PlanID        PlanID
+	ParentID      TaskID
+	Labels        []string
+	Mode          TaskMode
+}
+
+// EditTaskInput is the parameter bag for Client.EditTask. Edit semantics are
+// REPLACE: every field is written verbatim (e.g. passing a nil Labels clears
+// the label list). Callers wanting partial-edit semantics must read the
+// task, merge their changes, and pass the merged values.
+type EditTaskInput struct {
+	Subject       string
+	Description   string
+	State         TaskState
+	AssignedAgent string
+	DependsOn     []TaskID
+	PlanID        PlanID
+	ParentID      TaskID
+	Labels        []string
+	Mode          TaskMode
+}
+
 type TasksRepository interface {
 	// Save inserts or updates a task. When t.ID is empty the repository
 	// assigns a new ID and writes it back into t.ID. When t.ID is set the

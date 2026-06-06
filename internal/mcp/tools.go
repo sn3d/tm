@@ -30,10 +30,13 @@ type taskView struct {
 	AssignedAgent string   `json:"assigned_agent,omitempty"`
 	DependsOn     []string `json:"depends_on,omitempty"`
 	PlanID        string   `json:"plan_id,omitempty"`
+	ParentID      string   `json:"parent_id,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	Mode          string   `json:"mode,omitempty"`
 }
 
 func viewTask(t client.Task) taskView {
-	return taskView{
+	v := taskView{
 		ID:            t.ID,
 		Subject:       t.Subject,
 		Description:   t.Description,
@@ -41,7 +44,13 @@ func viewTask(t client.Task) taskView {
 		AssignedAgent: t.AssignedAgent,
 		DependsOn:     t.DependsOn,
 		PlanID:        t.PlanID,
+		ParentID:      t.ParentID,
+		Labels:        t.Labels,
 	}
+	if t.Mode != client.TaskModeDefault {
+		v.Mode = t.Mode.String()
+	}
+	return v
 }
 
 // dependsOnFromArgs reads the optional "depends_on" MCP argument, which can
@@ -76,6 +85,72 @@ func dependsOnFromArgs(args map[string]any) ([]client.TaskID, bool, error) {
 	default:
 		return nil, true, fmt.Errorf("depends_on must be an array or comma-separated string, got %T", raw)
 	}
+}
+
+// labelsFromArgs reads the optional "labels" MCP argument. Accepts either a
+// JSON array of strings or a comma-separated string. Returns (labels, true,
+// nil) when the field was present, (nil, false, nil) when absent. An empty
+// array (or empty string) is treated as "present and clearing labels".
+func labelsFromArgs(args map[string]any) ([]string, bool, error) {
+	raw, present := args["labels"]
+	if !present {
+		return nil, false, nil
+	}
+	switch v := raw.(type) {
+	case nil:
+		return nil, true, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil, true, fmt.Errorf("labels entries must be strings, got %T", item)
+			}
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil, true, nil
+		}
+		return out, true, nil
+	case string:
+		out := parseCSVStrings(v)
+		if len(out) == 0 {
+			return nil, true, nil
+		}
+		return out, true, nil
+	default:
+		return nil, true, fmt.Errorf("labels must be an array or comma-separated string, got %T", raw)
+	}
+}
+
+// parseCSVStrings splits a comma-separated string into trimmed non-empty
+// entries. Used by labelsFromArgs and shares the trimming logic with
+// parseCSVIDs but kept separate so the return types stay distinct.
+func parseCSVStrings(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	start := 0
+	for i := 0; i <= len(raw); i++ {
+		if i == len(raw) || raw[i] == ',' {
+			seg := raw[start:i]
+			j, k := 0, len(seg)
+			for j < k && (seg[j] == ' ' || seg[j] == '\t') {
+				j++
+			}
+			for k > j && (seg[k-1] == ' ' || seg[k-1] == '\t') {
+				k--
+			}
+			if j < k {
+				out = append(out, seg[j:k])
+			}
+			start = i + 1
+		}
+	}
+	return out
 }
 
 func parseCSVIDs(raw string) []client.TaskID {
@@ -116,8 +191,27 @@ func (s *Server) handleTaskCreate(_ context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultErrorFromErr("invalid depends_on", err), nil
 	}
 	planID, _ := args["plan_id"].(string)
+	parentID, _ := args["parent_id"].(string)
+	labels, _, err := labelsFromArgs(args)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("invalid labels", err), nil
+	}
+	modeStr, _ := args["mode"].(string)
+	mode, err := client.ParseTaskMode(modeStr)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
+	}
 
-	id, err := s.clientFor(args).CreateTask(subject, description, assignedAgent, dependsOn, planID)
+	id, err := s.clientFor(args).CreateTask(client.CreateTaskInput{
+		Subject:       subject,
+		Description:   description,
+		AssignedAgent: assignedAgent,
+		DependsOn:     dependsOn,
+		PlanID:        planID,
+		ParentID:      parentID,
+		Labels:        labels,
+		Mode:          mode,
+	})
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("create task", err), nil
 	}
@@ -140,38 +234,58 @@ func (s *Server) handleTaskEdit(_ context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultErrorFromErr(fmt.Sprintf("get task %q", id), err), nil
 	}
 
-	subject := current.Subject
+	in := client.EditTaskInput{
+		Subject:       current.Subject,
+		Description:   current.Description,
+		State:         current.State,
+		AssignedAgent: current.AssignedAgent,
+		DependsOn:     current.DependsOn,
+		PlanID:        current.PlanID,
+		ParentID:      current.ParentID,
+		Labels:        current.Labels,
+		Mode:          current.Mode,
+	}
 	if v, ok := args["subject"].(string); ok {
-		subject = v
+		in.Subject = v
 	}
-	description := current.Description
 	if v, ok := args["description"].(string); ok {
-		description = v
+		in.Description = v
 	}
-	state := current.State
 	if v, ok := args["state"].(string); ok && v != "" {
 		parsed, err := client.ParseTaskState(v)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("invalid state", err), nil
 		}
-		state = parsed
+		in.State = parsed
 	}
-	assignedAgent := current.AssignedAgent
 	if v, ok := args["assigned_agent"].(string); ok {
-		assignedAgent = v
+		in.AssignedAgent = v
 	}
-	dependsOn := current.DependsOn
 	if newDeps, present, err := dependsOnFromArgs(args); err != nil {
 		return mcp.NewToolResultErrorFromErr("invalid depends_on", err), nil
 	} else if present {
-		dependsOn = newDeps
+		in.DependsOn = newDeps
 	}
-	planID := current.PlanID
 	if v, ok := args["plan_id"].(string); ok {
-		planID = v
+		in.PlanID = v
+	}
+	if v, ok := args["parent_id"].(string); ok {
+		in.ParentID = v
+	}
+	if newLabels, present, err := labelsFromArgs(args); err != nil {
+		return mcp.NewToolResultErrorFromErr("invalid labels", err), nil
+	} else if present {
+		in.Labels = newLabels
+	}
+	if v, ok := args["mode"].(string); ok && v != "" {
+		parsed, err := client.ParseTaskMode(v)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
+		}
+		in.Mode = parsed
 	}
 
-	if err := s.clientFor(args).EditTask(id, subject, description, state, assignedAgent, dependsOn, planID); err != nil {
+	if err := s.clientFor(args).EditTask(id, in); err != nil {
 		return mcp.NewToolResultErrorFromErr(fmt.Sprintf("update task %q", id), err), nil
 	}
 	return mcp.NewToolResultText("ok"), nil
@@ -183,9 +297,17 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		tasks []client.Task
 		err   error
 	)
-	if planID, ok := args["plan_id"].(string); ok {
+	planID, hasPlan := args["plan_id"].(string)
+	parentID, hasParent := args["parent_id"].(string)
+	noParent, _ := args["no_parent"].(bool)
+	switch {
+	case hasPlan:
 		tasks, err = s.c.GetTasksByPlan(planID)
-	} else {
+	case hasParent:
+		tasks, err = s.c.GetTasksByParent(parentID)
+	case noParent:
+		tasks, err = s.c.GetTasksByParent("")
+	default:
 		tasks, err = s.c.ListTasks()
 	}
 	if err != nil {
@@ -195,11 +317,50 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		}
 		return mcp.NewToolResultErrorFromErr("list tasks", err), nil
 	}
+
+	if modeStr, ok := args["mode"].(string); ok && modeStr != "" {
+		mode, err := client.ParseTaskMode(modeStr)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
+		}
+		tasks = filterByMode(tasks, mode)
+	}
+	if label, ok := args["label"].(string); ok && label != "" {
+		tasks = filterByLabel(tasks, label)
+	}
+
 	views := make([]taskView, len(tasks))
 	for i, t := range tasks {
 		views[i] = viewTask(t)
 	}
 	return mcp.NewToolResultJSON(map[string]any{"tasks": views})
+}
+
+func filterByMode(tasks []client.Task, mode client.TaskMode) []client.Task {
+	out := make([]client.Task, 0, len(tasks))
+	for _, t := range tasks {
+		taskMode := t.Mode
+		if taskMode == "" {
+			taskMode = client.TaskModeDefault
+		}
+		if taskMode == mode {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func filterByLabel(tasks []client.Task, label string) []client.Task {
+	out := make([]client.Task, 0, len(tasks))
+	for _, t := range tasks {
+		for _, l := range t.Labels {
+			if l == label {
+				out = append(out, t)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func (s *Server) handleTaskGet(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

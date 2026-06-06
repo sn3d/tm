@@ -89,7 +89,7 @@ func TestClient_DefaultActorIsSystem(t *testing.T) {
 	if c.actor != ActorSystem {
 		t.Errorf("default actor: got %q, want %q", c.actor, ActorSystem)
 	}
-	_, _ = c.CreateTask("s", "", "", nil, "")
+	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	evs := c.backend.(*stubBackend).events.appended
 	if len(evs) != 1 || evs[0].Actor != ActorSystem {
 		t.Errorf("expected actor=system on emitted event, got %+v", evs)
@@ -98,7 +98,7 @@ func TestClient_DefaultActorIsSystem(t *testing.T) {
 
 func TestClient_WithActorOverrides(t *testing.T) {
 	c := New(newStubBackend(), WithActor("alice"))
-	_, _ = c.CreateTask("s", "", "", nil, "")
+	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	evs := c.backend.(*stubBackend).events.appended
 	if evs[0].Actor != "alice" {
 		t.Errorf("got actor=%q, want %q", evs[0].Actor, "alice")
@@ -114,7 +114,7 @@ func TestClient_WithActorEmptyFallsBackToSystem(t *testing.T) {
 
 func TestClient_EmitsTimestampedEvents(t *testing.T) {
 	c := New(newStubBackend())
-	_, _ = c.CreateTask("s", "", "", nil, "")
+	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	evs := c.backend.(*stubBackend).events.appended
 	if evs[0].Timestamp.IsZero() {
 		t.Error("expected non-zero timestamp")

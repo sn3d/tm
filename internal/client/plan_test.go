@@ -92,7 +92,7 @@ func TestUpdatePlan_NotFound(t *testing.T) {
 
 func TestCreate_PlanMustExist(t *testing.T) {
 	c := New(newStubBackend())
-	_, err := c.CreateTask("s", "", "", nil, "missing-plan")
+	_, err := c.CreateTask(CreateTaskInput{Subject: "s", PlanID: "missing-plan"})
 	var nfe *NotFoundError
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected NotFoundError, got %v", err)
@@ -107,7 +107,7 @@ func TestCreate_WithExistingPlan(t *testing.T) {
 	b.seedPlan("PLAN-1")
 	c := New(b)
 
-	id, err := c.CreateTask("s", "", "", nil, "PLAN-1")
+	id, err := c.CreateTask(CreateTaskInput{Subject: "s", PlanID: "PLAN-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestUpdate_PlanMustExist(t *testing.T) {
 	b.seed("1")
 	c := New(b)
 
-	err := c.EditTask("1", "s", "", TaskStateTodo, "", nil, "missing-plan")
+	err := c.EditTask("1", EditTaskInput{Subject: "s", State: TaskStateTodo, PlanID: "missing-plan"})
 	var nfe *NotFoundError
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected NotFoundError, got %v", err)
@@ -136,12 +136,12 @@ func TestUpdate_ClearPlan(t *testing.T) {
 	b := newStubBackend()
 	b.seedPlan("PLAN-1")
 	c := New(b)
-	id, err := c.CreateTask("s", "", "", nil, "PLAN-1")
+	id, err := c.CreateTask(CreateTaskInput{Subject: "s", PlanID: "PLAN-1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := c.EditTask(id, "s", "", TaskStateTodo, "", nil, ""); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "s", State: TaskStateTodo}); err != nil {
 		t.Fatalf("Update clear: %v", err)
 	}
 	got, _ := c.GetTask(id)
@@ -156,16 +156,16 @@ func TestGetTasksByPlan(t *testing.T) {
 	b.seedPlan("PLAN-2")
 	c := New(b)
 
-	if _, err := c.CreateTask("a", "", "", nil, "PLAN-1"); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "a", PlanID: "PLAN-1"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := c.CreateTask("b", "", "", nil, "PLAN-1"); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "b", PlanID: "PLAN-1"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := c.CreateTask("c", "", "", nil, "PLAN-2"); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "c", PlanID: "PLAN-2"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := c.CreateTask("d", "", "", nil, ""); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "d"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -200,13 +200,13 @@ func TestGetTasksByPlan_StandaloneSkipsValidation(t *testing.T) {
 	b.seedPlan("PLAN-1")
 	c := New(b)
 
-	if _, err := c.CreateTask("standalone-a", "", "", nil, ""); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "standalone-a"}); err != nil {
 		t.Fatalf("Create standalone-a: %v", err)
 	}
-	if _, err := c.CreateTask("in-plan", "", "", nil, "PLAN-1"); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "in-plan", PlanID: "PLAN-1"}); err != nil {
 		t.Fatalf("Create in-plan: %v", err)
 	}
-	if _, err := c.CreateTask("standalone-b", "", "", nil, ""); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "standalone-b"}); err != nil {
 		t.Fatalf("Create standalone-b: %v", err)
 	}
 

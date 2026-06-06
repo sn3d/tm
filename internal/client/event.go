@@ -14,6 +14,9 @@ const (
 	EventTaskAssigned         EventKind = "task.assigned"
 	EventTaskDependsOnChanged EventKind = "task.depends_on_changed"
 	EventTaskPlanChanged      EventKind = "task.plan_changed"
+	EventTaskParentChanged    EventKind = "task.parent_changed"
+	EventTaskLabelsChanged    EventKind = "task.labels_changed"
+	EventTaskModeChanged      EventKind = "task.mode_changed"
 	EventTaskCommented        EventKind = "task.commented"
 
 	EventPlanCreated      EventKind = "plan.created"

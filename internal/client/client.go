@@ -51,51 +51,70 @@ func (c *Client) As(actor string) *Client {
 	return &Client{backend: c.backend, actor: actor}
 }
 
-// Create adds a new task with the given subject, description, and assigned
-// agent. The new task starts in TaskStateDefault (todo). Pass an empty
-// assignedAgent to leave it unassigned. dependsOn lists existing task IDs
-// that the new task depends on; every referenced task must already exist.
-// When planID is non-empty the referenced plan must exist; pass "" for a
-// standalone task. The repository assigns the ID, which is returned.
-func (c *Client) CreateTask(subject, description, assignedAgent string, dependsOn []TaskID, planID PlanID) (TaskID, error) {
-	if err := c.validateDependencies("", dependsOn); err != nil {
+// CreateTask adds a new task. The new task starts in TaskStateDefault (todo).
+// Validation: DependsOn entries must reference existing tasks; PlanID, when
+// non-empty, must reference an existing plan; ParentID, when non-empty, must
+// reference an existing task. The repository assigns the ID, which is
+// returned.
+func (c *Client) CreateTask(in CreateTaskInput) (TaskID, error) {
+	if err := c.validateDependencies("", in.DependsOn); err != nil {
 		return "", err
 	}
-	if err := c.validatePlan(planID); err != nil {
+	if err := c.validatePlan(in.PlanID); err != nil {
 		return "", err
+	}
+	if err := c.validateParent("", in.ParentID); err != nil {
+		return "", err
+	}
+	mode := in.Mode
+	if mode == "" {
+		mode = TaskModeDefault
 	}
 	t := Task{
-		Subject:       subject,
-		Description:   description,
+		Subject:       in.Subject,
+		Description:   in.Description,
 		State:         TaskStateDefault,
-		AssignedAgent: assignedAgent,
-		DependsOn:     dependsOn,
-		PlanID:        planID,
+		AssignedAgent: in.AssignedAgent,
+		DependsOn:     in.DependsOn,
+		PlanID:        in.PlanID,
+		ParentID:      in.ParentID,
+		Labels:        in.Labels,
+		Mode:          mode,
 	}
 	if err := c.backend.Tasks().Save(&t); err != nil {
 		return "", fmt.Errorf("save task: %w", err)
 	}
-	payload := map[string]any{"subject": subject}
-	if assignedAgent != "" {
-		payload["assigned_agent"] = assignedAgent
+	payload := map[string]any{"subject": in.Subject}
+	if in.AssignedAgent != "" {
+		payload["assigned_agent"] = in.AssignedAgent
 	}
-	if planID != "" {
-		payload["plan_id"] = planID
+	if in.PlanID != "" {
+		payload["plan_id"] = in.PlanID
 	}
-	if len(dependsOn) > 0 {
-		payload["depends_on"] = append([]TaskID(nil), dependsOn...)
+	if in.ParentID != "" {
+		payload["parent_id"] = in.ParentID
+	}
+	if len(in.DependsOn) > 0 {
+		payload["depends_on"] = append([]TaskID(nil), in.DependsOn...)
+	}
+	if len(in.Labels) > 0 {
+		payload["labels"] = append([]string(nil), in.Labels...)
+	}
+	if mode != TaskModeDefault {
+		payload["mode"] = string(mode)
 	}
 	c.emit(&Event{Kind: EventTaskCreated, TaskID: t.ID, Payload: payload})
 	return t.ID, nil
 }
 
-// Edit overwrites the mutable fields of an existing task with the values
-// provided. Callers that want partial-edit semantics ("change only some
-// fields") must Get the current task first and pass the merged values back.
-// dependsOn replaces the existing dependency list; every referenced task
-// must already exist, and the resulting graph must remain acyclic. Returns
-// a NotFoundError if no task with the given ID exists.
-func (c *Client) EditTask(id TaskID, subject, description string, state TaskState, assignedAgent string, dependsOn []TaskID, planID PlanID) error {
+// EditTask overwrites every mutable field of an existing task with the
+// values in `in`. Callers that want partial-edit semantics must Get the
+// current task first, merge their changes, and pass the merged values back.
+// DependsOn replaces the existing dependency list; every referenced task
+// must already exist, and the resulting graph must remain acyclic. ParentID,
+// when non-empty, must reference an existing task and cannot equal `id`.
+// Returns a NotFoundError if no task with the given ID exists.
+func (c *Client) EditTask(id TaskID, in EditTaskInput) error {
 	t, err := c.backend.Tasks().GetByID(id)
 	if err != nil {
 		return fmt.Errorf("load task %q: %w", id, err)
@@ -103,20 +122,31 @@ func (c *Client) EditTask(id TaskID, subject, description string, state TaskStat
 	if t == nil {
 		return &NotFoundError{Resource: "task", ID: id}
 	}
-	if err := c.validateDependencies(id, dependsOn); err != nil {
+	if err := c.validateDependencies(id, in.DependsOn); err != nil {
 		return err
 	}
-	if err := c.validatePlan(planID); err != nil {
+	if err := c.validatePlan(in.PlanID); err != nil {
 		return err
+	}
+	if err := c.validateParent(id, in.ParentID); err != nil {
+		return err
+	}
+	mode := in.Mode
+	if mode == "" {
+		mode = TaskModeDefault
 	}
 	prev := *t
 	prev.DependsOn = append([]TaskID(nil), t.DependsOn...)
-	t.Subject = subject
-	t.Description = description
-	t.State = state
-	t.AssignedAgent = assignedAgent
-	t.DependsOn = dependsOn
-	t.PlanID = planID
+	prev.Labels = append([]string(nil), t.Labels...)
+	t.Subject = in.Subject
+	t.Description = in.Description
+	t.State = in.State
+	t.AssignedAgent = in.AssignedAgent
+	t.DependsOn = in.DependsOn
+	t.PlanID = in.PlanID
+	t.ParentID = in.ParentID
+	t.Labels = in.Labels
+	t.Mode = mode
 	if err := c.backend.Tasks().Save(t); err != nil {
 		return fmt.Errorf("save task %q: %w", id, err)
 	}
@@ -163,7 +193,25 @@ func (c *Client) emitTaskEditEvents(prev, next Task) {
 			"from": prev.PlanID, "to": next.PlanID,
 		}})
 	}
+	if prev.ParentID != next.ParentID {
+		c.emit(&Event{Kind: EventTaskParentChanged, TaskID: next.ID, Payload: map[string]any{
+			"from": prev.ParentID, "to": next.ParentID,
+		}})
+	}
+	if !equalStrings(prev.Labels, next.Labels) {
+		c.emit(&Event{Kind: EventTaskLabelsChanged, TaskID: next.ID, Payload: map[string]any{
+			"from": append([]string(nil), prev.Labels...),
+			"to":   append([]string(nil), next.Labels...),
+		}})
+	}
+	if prev.Mode != next.Mode {
+		c.emit(&Event{Kind: EventTaskModeChanged, TaskID: next.ID, Payload: map[string]any{
+			"from": string(prev.Mode), "to": string(next.Mode),
+		}})
+	}
 }
+
+func equalStrings(a, b []string) bool { return reflect.DeepEqual(a, b) }
 
 func equalIDs(a, b []TaskID) bool { return reflect.DeepEqual(a, b) }
 
@@ -179,6 +227,28 @@ func (c *Client) validatePlan(planID PlanID) error {
 	}
 	if p == nil {
 		return &NotFoundError{Resource: "plan", ID: planID}
+	}
+	return nil
+}
+
+// validateParent checks that a non-empty parentID refers to an existing task
+// and is not selfID (a task cannot be its own parent). An empty parentID is
+// treated as "top-level" and always passes. Transitive cycles (A→B→A) are
+// not checked here — commit 2 will add that once parent_id becomes the
+// authoritative hierarchy field.
+func (c *Client) validateParent(selfID, parentID TaskID) error {
+	if parentID == "" {
+		return nil
+	}
+	if parentID == selfID {
+		return fmt.Errorf("task %q cannot be its own parent", selfID)
+	}
+	p, err := c.backend.Tasks().GetByID(parentID)
+	if err != nil {
+		return fmt.Errorf("check parent %q: %w", parentID, err)
+	}
+	if p == nil {
+		return &NotFoundError{Resource: "task", ID: parentID}
 	}
 	return nil
 }
@@ -393,6 +463,27 @@ func (c *Client) GetPlan(id PlanID) (*Plan, error) {
 // ListPlans returns all plans.
 func (c *Client) ListPlans() ([]Plan, error) {
 	return c.backend.Plans().GetAll()
+}
+
+// GetTasksByParent returns all tasks whose ParentID matches the given id.
+// An empty id is treated as "top-level" and returns tasks with no parent;
+// no existence check is performed in that case. For a non-empty id the
+// parent task must exist, otherwise a NotFoundError is returned.
+func (c *Client) GetTasksByParent(id TaskID) ([]Task, error) {
+	if id != "" {
+		p, err := c.backend.Tasks().GetByID(id)
+		if err != nil {
+			return nil, fmt.Errorf("load parent task %q: %w", id, err)
+		}
+		if p == nil {
+			return nil, &NotFoundError{Resource: "task", ID: id}
+		}
+	}
+	tasks, err := c.backend.Tasks().GetByParent(id)
+	if err != nil {
+		return nil, fmt.Errorf("load tasks for parent %q: %w", id, err)
+	}
+	return tasks, nil
 }
 
 // GetTasksByPlan returns all tasks associated with the given plan. An empty
