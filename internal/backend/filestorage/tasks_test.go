@@ -335,104 +335,7 @@ some description
 	}
 }
 
-// A pre-collapse storage directory with a plans/ subdirectory and tasks
-// pointing at those plans via plan_id must collapse cleanly on open:
-//   - each plans/*.md becomes tasks/*.md with mode=planning and state remapped.
-//   - existing tasks whose frontmatter has plan_id get parent_id set to it.
-//   - the plans/ directory is removed.
-func TestNewBackend_CollapsesLegacyPlansDirectory(t *testing.T) {
-	dir := tmpDir(t)
-
-	// Seed: a "plans" dir with one plan file in active state, and a tasks
-	// dir whose file references the plan via the legacy plan_id field.
-	if err := os.MkdirAll(filepath.Join(dir, "plans"), 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "tasks"), 0o755); err != nil {
-		t.Fatalf("mkdir tasks: %v", err)
-	}
-	planContent := `---
-id: PLAN-1
-state: active
-assigned_agent: lead
----
-
-# Old plan
-
-plan body
-`
-	if err := os.WriteFile(filepath.Join(dir, "plans", "PLAN-1--old-plan.md"), []byte(planContent), 0o644); err != nil {
-		t.Fatalf("seed plan: %v", err)
-	}
-	taskContent := `---
-id: T-1
-state: todo
-assigned_agent: alice
-plan_id: PLAN-1
----
-
-# child task
-
-body
-`
-	if err := os.WriteFile(filepath.Join(dir, "tasks", "T-1--child-task.md"), []byte(taskContent), 0o644); err != nil {
-		t.Fatalf("seed task: %v", err)
-	}
-
-	b, err := NewBackend(dir)
-	if err != nil {
-		t.Fatalf("NewBackend: %v", err)
-	}
-
-	// The plan file should now exist as a planning-mode task with the same
-	// id, the active plan state remapped to in_progress, and the original
-	// description preserved.
-	planAsTask, err := b.Tasks().GetByID("PLAN-1")
-	if err != nil {
-		t.Fatalf("GetByID PLAN-1: %v", err)
-	}
-	if planAsTask == nil {
-		t.Fatal("expected absorbed plan-as-task PLAN-1, got nil")
-	}
-	if planAsTask.Mode != client.TaskModePlanning {
-		t.Errorf("expected mode=planning, got %q", planAsTask.Mode)
-	}
-	if planAsTask.State != client.TaskStateInProgress {
-		t.Errorf("expected state=in_progress (from active), got %q", planAsTask.State)
-	}
-	if planAsTask.Subject != "Old plan" {
-		t.Errorf("expected subject preserved, got %q", planAsTask.Subject)
-	}
-
-	// The child task should now have parent_id pointing at PLAN-1 and the
-	// legacy plan_id frontmatter field should have been removed.
-	child, err := b.Tasks().GetByID("T-1")
-	if err != nil {
-		t.Fatalf("GetByID T-1: %v", err)
-	}
-	if child == nil {
-		t.Fatal("expected child task T-1, got nil")
-	}
-	if child.ParentID != "PLAN-1" {
-		t.Errorf("expected ParentID=PLAN-1 on child, got %q", child.ParentID)
-	}
-
-	// The plans/ directory must be gone.
-	if _, err := os.Stat(filepath.Join(dir, "plans")); !os.IsNotExist(err) {
-		t.Errorf("expected plans/ to be removed, stat err: %v", err)
-	}
-
-	// Opening the backend a second time should be a clean no-op (no plans/
-	// to walk).
-	if _, err := NewBackend(dir); err != nil {
-		t.Errorf("second NewBackend should not error, got %v", err)
-	}
-}
-
 // Top-level tasks (no ParentID) must not emit a parent_id frontmatter field.
-// Similarly, plan_id is never written by the new code path — the field
-// remains on the frontmatter struct only so legacy files migrating to
-// parent_id can still be read.
 func TestTasksRepository_Save_TopLevelOmitsParentIDFromFile(t *testing.T) {
 	dir := tmpDir(t)
 	b, err := NewBackend(dir)
@@ -451,9 +354,6 @@ func TestTasksRepository_Save_TopLevelOmitsParentIDFromFile(t *testing.T) {
 	}
 	if bytes.Contains(raw, []byte("parent_id")) {
 		t.Errorf("top-level task file should not emit parent_id, got:\n%s", string(raw))
-	}
-	if bytes.Contains(raw, []byte("plan_id")) {
-		t.Errorf("new task file must not emit legacy plan_id, got:\n%s", string(raw))
 	}
 }
 

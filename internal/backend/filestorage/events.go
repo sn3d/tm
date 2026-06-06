@@ -22,16 +22,13 @@ type eventsRepository struct {
 }
 
 // eventLine is the on-disk JSON representation. Field names use snake_case
-// so the file is friendlier to hand inspection. The legacy plan_id field is
-// kept on read so older event logs deserialize cleanly; new events never
-// write it.
+// so the file is friendlier to hand inspection.
 type eventLine struct {
 	ID        string         `json:"id"`
 	Timestamp string         `json:"ts"`
 	Actor     string         `json:"actor"`
 	Kind      string         `json:"kind"`
 	TaskID    string         `json:"task_id,omitempty"`
-	PlanID    string         `json:"plan_id,omitempty"`
 	Payload   map[string]any `json:"payload,omitempty"`
 }
 

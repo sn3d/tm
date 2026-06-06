@@ -19,15 +19,10 @@ type backend struct {
 
 // NewBackend returns a Backend that stores each task as a single markdown
 // file (with YAML frontmatter and inline comment blocks) under dir/tasks/.
-// On open, any legacy dir/plans/ directory is collapsed into tasks/ as
-// planning-mode entries by collapsePlansIntoTasks.
 func NewBackend(dir string) (client.Backend, error) {
 	tasksDir := filepath.Join(dir, "tasks")
 	if err := os.MkdirAll(tasksDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create tasks dir: %w", err)
-	}
-	if err := collapsePlansIntoTasks(dir); err != nil {
-		return nil, fmt.Errorf("collapse plans into tasks: %w", err)
 	}
 	b := &backend{dir: dir}
 	b.tasks = &tasksRepository{dir: dir}
