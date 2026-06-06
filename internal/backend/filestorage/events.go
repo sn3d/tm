@@ -22,7 +22,9 @@ type eventsRepository struct {
 }
 
 // eventLine is the on-disk JSON representation. Field names use snake_case
-// so the file is friendlier to hand inspection.
+// so the file is friendlier to hand inspection. The legacy plan_id field is
+// kept on read so older event logs deserialize cleanly; new events never
+// write it.
 type eventLine struct {
 	ID        string         `json:"id"`
 	Timestamp string         `json:"ts"`
@@ -46,7 +48,6 @@ func (er *eventsRepository) Append(e *client.Event) error {
 		Actor:     e.Actor,
 		Kind:      string(e.Kind),
 		TaskID:    e.TaskID,
-		PlanID:    e.PlanID,
 		Payload:   e.Payload,
 	}
 	raw, err := json.Marshal(line)
@@ -138,7 +139,6 @@ func parseEventLine(raw []byte) (client.Event, error) {
 		Actor:     line.Actor,
 		Kind:      client.EventKind(line.Kind),
 		TaskID:    line.TaskID,
-		PlanID:    line.PlanID,
 		Payload:   line.Payload,
 	}, nil
 }
@@ -148,9 +148,6 @@ func matches(e client.Event, f client.EventFilter) bool {
 		return false // skip blank-line zero value
 	}
 	if f.TaskID != "" && e.TaskID != f.TaskID {
-		return false
-	}
-	if f.PlanID != "" && e.PlanID != f.PlanID {
 		return false
 	}
 	if f.Actor != "" && e.Actor != f.Actor {

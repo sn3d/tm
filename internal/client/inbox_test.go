@@ -108,38 +108,10 @@ func TestInbox_ResumableIsTasksUpdatedSinceLastSeen(t *testing.T) {
 	}
 }
 
-func TestInbox_PlansFilteredByAssigneeAndCategory(t *testing.T) {
-	b := newStubBackend()
-	for _, ps := range []struct {
-		id, assignee string
-		state        PlanState
-	}{
-		{"P-1", "alice", PlanStateDraft},
-		{"P-2", "alice", PlanStateActive},
-		{"P-3", "alice", PlanStateOnHold},
-		{"P-4", "alice", PlanStateCompleted},
-		{"P-5", "alice", PlanStateCancelled},
-		{"P-6", "bob", PlanStateDraft},
-	} {
-		b.plans.store[ps.id] = &Plan{ID: ps.id, AssignedAgent: ps.assignee, State: ps.state}
-	}
-
-	box, _ := New(b).Inbox("alice")
-	got := map[string]bool{}
-	for _, p := range box.Plans {
-		got[p.ID] = true
-	}
-	for _, id := range []string{"P-1", "P-2", "P-3"} {
-		if !got[id] {
-			t.Errorf("missing plan %q", id)
-		}
-	}
-	for _, id := range []string{"P-4", "P-5", "P-6"} {
-		if got[id] {
-			t.Errorf("unexpected plan %q in inbox", id)
-		}
-	}
-}
+// Planning-mode tasks share the unified Tasks list, so there is no
+// separate plans section to test. The TestInbox_TasksFilteredByAssigneeAndCategory
+// case above already covers state→category filtering for all tasks
+// regardless of mode.
 
 func TestInbox_RecentChangesExcludeOwnActions(t *testing.T) {
 	b := newStubBackend()

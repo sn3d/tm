@@ -12,31 +12,25 @@ import (
 // because Client.Create/Update need a real backend to look up dependency
 // targets and walk the dependency graph for cycle detection.
 type stubBackend struct {
-	tasks        *stubTasks
-	comments     *stubComments
-	plans        *stubPlans
-	planComments *stubPlanComments
-	events       *stubEvents
-	cursors      *stubActorCursors
+	tasks    *stubTasks
+	comments *stubComments
+	events   *stubEvents
+	cursors  *stubActorCursors
 }
 
 func newStubBackend() *stubBackend {
 	return &stubBackend{
-		tasks:        &stubTasks{store: map[TaskID]*Task{}},
-		comments:     &stubComments{},
-		plans:        &stubPlans{store: map[PlanID]*Plan{}},
-		planComments: &stubPlanComments{store: map[PlanID][]Comment{}},
-		events:       &stubEvents{},
-		cursors:      &stubActorCursors{store: map[string]time.Time{}},
+		tasks:    &stubTasks{store: map[TaskID]*Task{}},
+		comments: &stubComments{},
+		events:   &stubEvents{},
+		cursors:  &stubActorCursors{store: map[string]time.Time{}},
 	}
 }
 
-func (b *stubBackend) Tasks() TasksRepository                 { return b.tasks }
-func (b *stubBackend) Comments() CommentsRepository           { return b.comments }
-func (b *stubBackend) Plans() PlansRepository                 { return b.plans }
-func (b *stubBackend) PlanComments() PlanCommentsRepository   { return b.planComments }
-func (b *stubBackend) Events() EventsRepository               { return b.events }
-func (b *stubBackend) ActorCursors() ActorCursorRepository    { return b.cursors }
+func (b *stubBackend) Tasks() TasksRepository              { return b.tasks }
+func (b *stubBackend) Comments() CommentsRepository        { return b.comments }
+func (b *stubBackend) Events() EventsRepository            { return b.events }
+func (b *stubBackend) ActorCursors() ActorCursorRepository { return b.cursors }
 
 type stubActorCursors struct {
 	store map[string]time.Time
@@ -75,9 +69,6 @@ func (s *stubEvents) List(filter EventFilter) ([]Event, error) {
 	for i := len(s.appended) - 1; i >= 0; i-- {
 		e := s.appended[i]
 		if filter.TaskID != "" && e.TaskID != filter.TaskID {
-			continue
-		}
-		if filter.PlanID != "" && e.PlanID != filter.PlanID {
 			continue
 		}
 		if filter.Actor != "" && e.Actor != filter.Actor {
@@ -144,16 +135,6 @@ func (s *stubTasks) GetAll() ([]Task, error) {
 	return out, nil
 }
 
-func (s *stubTasks) GetByPlan(planID PlanID) ([]Task, error) {
-	out := make([]Task, 0)
-	for _, t := range s.store {
-		if t.PlanID == planID {
-			out = append(out, *t)
-		}
-	}
-	return out, nil
-}
-
 func (s *stubTasks) GetByParent(parentID TaskID) ([]Task, error) {
 	out := make([]Task, 0)
 	for _, t := range s.store {
@@ -169,66 +150,10 @@ type stubComments struct{}
 func (stubComments) Add(TaskID, *Comment) error           { return nil }
 func (stubComments) GetForTask(TaskID) ([]Comment, error) { return nil, nil }
 
-type stubPlans struct {
-	store map[PlanID]*Plan
-	next  int
-}
-
-func (s *stubPlans) Save(p *Plan) error {
-	if p.ID == "" {
-		s.next++
-		p.ID = "PLAN-" + strconv.Itoa(s.next)
-	}
-	cp := *p
-	s.store[p.ID] = &cp
-	return nil
-}
-
-func (s *stubPlans) GetByID(id PlanID) (*Plan, error) {
-	p, ok := s.store[id]
-	if !ok {
-		return nil, nil
-	}
-	cp := *p
-	return &cp, nil
-}
-
-func (s *stubPlans) GetAll() ([]Plan, error) {
-	out := make([]Plan, 0, len(s.store))
-	for _, p := range s.store {
-		out = append(out, *p)
-	}
-	return out, nil
-}
-
-type stubPlanComments struct {
-	store map[PlanID][]Comment
-	next  int
-}
-
-func (s *stubPlanComments) Add(id PlanID, c *Comment) error {
-	s.next++
-	c.ID = "C-" + strconv.Itoa(s.next)
-	s.store[id] = append(s.store[id], *c)
-	return nil
-}
-
-func (s *stubPlanComments) GetForPlan(id PlanID) ([]Comment, error) {
-	out := make([]Comment, len(s.store[id]))
-	copy(out, s.store[id])
-	return out, nil
-}
-
 // seed inserts a task directly so tests can construct a graph without going
 // through Client.Create (which itself enforces validation we want to test).
 func (b *stubBackend) seed(id TaskID, deps ...TaskID) {
 	b.tasks.store[id] = &Task{ID: id, DependsOn: append([]TaskID(nil), deps...)}
-}
-
-// seedPlan inserts a plan directly so tests can reference an existing plan
-// without going through Client.CreatePlan.
-func (b *stubBackend) seedPlan(id PlanID) {
-	b.plans.store[id] = &Plan{ID: id}
 }
 
 func TestCreate_NoDeps(t *testing.T) {

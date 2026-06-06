@@ -13,41 +13,32 @@ const (
 	EventTaskStateChanged     EventKind = "task.state_changed"
 	EventTaskAssigned         EventKind = "task.assigned"
 	EventTaskDependsOnChanged EventKind = "task.depends_on_changed"
-	EventTaskPlanChanged      EventKind = "task.plan_changed"
 	EventTaskParentChanged    EventKind = "task.parent_changed"
 	EventTaskLabelsChanged    EventKind = "task.labels_changed"
 	EventTaskModeChanged      EventKind = "task.mode_changed"
 	EventTaskCommented        EventKind = "task.commented"
-
-	EventPlanCreated      EventKind = "plan.created"
-	EventPlanEdited       EventKind = "plan.edited"
-	EventPlanStateChanged EventKind = "plan.state_changed"
-	EventPlanAssigned     EventKind = "plan.assigned"
-	EventPlanCommented    EventKind = "plan.commented"
 )
 
 // ActorSystem is the fallback Actor recorded when no caller-supplied actor
 // is configured (e.g. a unit test that wires the client directly).
 const ActorSystem = "system"
 
-// Event is one entry in the append-only audit journal. The current-state
-// row (in tasks/plans) remains authoritative; events are a side-effect log
-// recording who did what, when.
+// Event is one entry in the append-only audit journal. The current task row
+// remains authoritative; events are a side-effect log recording who did
+// what, when.
 type Event struct {
-	ID        string         // ULID, sortable by time
+	ID        string // ULID, sortable by time
 	Timestamp time.Time
 	Actor     string
 	Kind      EventKind
-	TaskID    TaskID         // empty for plan-only events
-	PlanID    PlanID         // empty for task-only events
-	Payload   map[string]any // kind-specific; see emit_* helpers in client
+	TaskID    TaskID
+	Payload   map[string]any // kind-specific; see emit helpers in client
 }
 
 // EventFilter narrows the result of EventsRepository.List. Zero-value fields
 // are ignored; non-zero fields are AND-combined. Kinds is OR-combined.
 type EventFilter struct {
 	TaskID TaskID
-	PlanID PlanID
 	Actor  string
 	Kinds  []EventKind
 	Since  time.Time // exclusive lower bound

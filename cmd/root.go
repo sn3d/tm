@@ -6,7 +6,6 @@ import (
 
 	"github.com/sn3d/tm/cmd/inbox"
 	"github.com/sn3d/tm/cmd/journal"
-	"github.com/sn3d/tm/cmd/plan"
 	"github.com/sn3d/tm/cmd/task"
 	"github.com/sn3d/tm/internal/client"
 	"github.com/urfave/cli/v3"
@@ -34,7 +33,6 @@ var Root = &cli.Command{
 	Commands: []*cli.Command{
 		initCmd,
 		task.Cmd,
-		plan.Cmd,
 		journal.Cmd,
 		inbox.Cmd,
 		mcpCmd,

@@ -29,7 +29,6 @@ type taskView struct {
 	State         string   `json:"state"`
 	AssignedAgent string   `json:"assigned_agent,omitempty"`
 	DependsOn     []string `json:"depends_on,omitempty"`
-	PlanID        string   `json:"plan_id,omitempty"`
 	ParentID      string   `json:"parent_id,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
 	Mode          string   `json:"mode,omitempty"`
@@ -43,7 +42,6 @@ func viewTask(t client.Task) taskView {
 		State:         t.State.String(),
 		AssignedAgent: t.AssignedAgent,
 		DependsOn:     t.DependsOn,
-		PlanID:        t.PlanID,
 		ParentID:      t.ParentID,
 		Labels:        t.Labels,
 	}
@@ -190,8 +188,13 @@ func (s *Server) handleTaskCreate(_ context.Context, req mcp.CallToolRequest) (*
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("invalid depends_on", err), nil
 	}
-	planID, _ := args["plan_id"].(string)
 	parentID, _ := args["parent_id"].(string)
+	// Accept legacy plan_id as a synonym for parent_id during the transition.
+	// Plans were collapsed into planning-mode tasks, so the field a caller
+	// would have set as plan_id now maps to the task's parent_id.
+	if parentID == "" {
+		parentID, _ = args["plan_id"].(string)
+	}
 	labels, _, err := labelsFromArgs(args)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("invalid labels", err), nil
@@ -207,7 +210,6 @@ func (s *Server) handleTaskCreate(_ context.Context, req mcp.CallToolRequest) (*
 		Description:   description,
 		AssignedAgent: assignedAgent,
 		DependsOn:     dependsOn,
-		PlanID:        planID,
 		ParentID:      parentID,
 		Labels:        labels,
 		Mode:          mode,
@@ -240,7 +242,6 @@ func (s *Server) handleTaskEdit(_ context.Context, req mcp.CallToolRequest) (*mc
 		State:         current.State,
 		AssignedAgent: current.AssignedAgent,
 		DependsOn:     current.DependsOn,
-		PlanID:        current.PlanID,
 		ParentID:      current.ParentID,
 		Labels:        current.Labels,
 		Mode:          current.Mode,
@@ -266,8 +267,10 @@ func (s *Server) handleTaskEdit(_ context.Context, req mcp.CallToolRequest) (*mc
 	} else if present {
 		in.DependsOn = newDeps
 	}
+	// plan_id is accepted as a legacy synonym for parent_id; both map to the
+	// same field on the unified task entity. parent_id wins if both are set.
 	if v, ok := args["plan_id"].(string); ok {
-		in.PlanID = v
+		in.ParentID = v
 	}
 	if v, ok := args["parent_id"].(string); ok {
 		in.ParentID = v
@@ -297,14 +300,15 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		tasks []client.Task
 		err   error
 	)
+	// plan_id is accepted as a legacy alias for parent_id.
 	planID, hasPlan := args["plan_id"].(string)
 	parentID, hasParent := args["parent_id"].(string)
 	noParent, _ := args["no_parent"].(bool)
 	switch {
-	case hasPlan:
-		tasks, err = s.c.GetTasksByPlan(planID)
 	case hasParent:
 		tasks, err = s.c.GetTasksByParent(parentID)
+	case hasPlan:
+		tasks, err = s.c.GetTasksByParent(planID)
 	case noParent:
 		tasks, err = s.c.GetTasksByParent("")
 	default:

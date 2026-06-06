@@ -41,7 +41,7 @@ func TestStubEvents_ListFilters(t *testing.T) {
 	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "1", Actor: "alice"})
 	_ = s.Append(&Event{Kind: EventTaskAssigned, TaskID: "1", Actor: "bob"})
 	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "2", Actor: "alice"})
-	_ = s.Append(&Event{Kind: EventPlanCreated, PlanID: "PLAN-1", Actor: "carol"})
+	_ = s.Append(&Event{Kind: EventTaskParentChanged, TaskID: "3", Actor: "carol"})
 
 	tests := []struct {
 		name   string
@@ -49,7 +49,6 @@ func TestStubEvents_ListFilters(t *testing.T) {
 		want   int
 	}{
 		{"by task", EventFilter{TaskID: "1"}, 2},
-		{"by plan", EventFilter{PlanID: "PLAN-1"}, 1},
 		{"by actor", EventFilter{Actor: "alice"}, 2},
 		{"by kind", EventFilter{Kinds: []EventKind{EventTaskAssigned}}, 1},
 		{"by kinds OR", EventFilter{Kinds: []EventKind{EventTaskAssigned, EventTaskCreated}}, 3},

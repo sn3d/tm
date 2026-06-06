@@ -30,8 +30,8 @@ func (er *eventsRepository) Append(e *client.Event) error {
 	if err != nil {
 		return fmt.Errorf("marshal event payload: %w", err)
 	}
-	const q = `INSERT INTO events (id, ts, actor, kind, task_id, plan_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	if _, err := er.db.Exec(q, e.ID, e.Timestamp.Format(time.RFC3339Nano), e.Actor, string(e.Kind), e.TaskID, e.PlanID, string(raw)); err != nil {
+	const q = `INSERT INTO events (id, ts, actor, kind, task_id, payload) VALUES (?, ?, ?, ?, ?, ?)`
+	if _, err := er.db.Exec(q, e.ID, e.Timestamp.Format(time.RFC3339Nano), e.Actor, string(e.Kind), e.TaskID, string(raw)); err != nil {
 		return fmt.Errorf("insert event %q: %w", e.ID, err)
 	}
 	return nil
@@ -45,10 +45,6 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 	if filter.TaskID != "" {
 		conds = append(conds, "task_id = ?")
 		args = append(args, filter.TaskID)
-	}
-	if filter.PlanID != "" {
-		conds = append(conds, "plan_id = ?")
-		args = append(args, filter.PlanID)
 	}
 	if filter.Actor != "" {
 		conds = append(conds, "actor = ?")
@@ -67,7 +63,7 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 		args = append(args, filter.Since.Format(time.RFC3339Nano))
 	}
 
-	q := "SELECT id, ts, actor, kind, task_id, plan_id, payload FROM events"
+	q := "SELECT id, ts, actor, kind, task_id, payload FROM events"
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -90,7 +86,7 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 			kindStr string
 			raw     string
 		)
-		if err := rows.Scan(&e.ID, &tsStr, &e.Actor, &kindStr, &e.TaskID, &e.PlanID, &raw); err != nil {
+		if err := rows.Scan(&e.ID, &tsStr, &e.Actor, &kindStr, &e.TaskID, &raw); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
 		}
 		ts, err := time.Parse(time.RFC3339Nano, tsStr)

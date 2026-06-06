@@ -10,33 +10,28 @@ import (
 )
 
 type backend struct {
-	dir          string
-	tasks        *tasksRepository
-	comments     *commentsRepository
-	plans        *plansRepository
-	planComments *planCommentsRepository
-	events       *eventsRepository
-	cursors      *actorCursorsRepository
+	dir      string
+	tasks    *tasksRepository
+	comments *commentsRepository
+	events   *eventsRepository
+	cursors  *actorCursorsRepository
 }
 
 // NewBackend returns a Backend that stores each task as a single markdown
 // file (with YAML frontmatter and inline comment blocks) under dir/tasks/.
-// Plans live under dir/plans/. Both directories are created if they do not
-// exist.
+// On open, any legacy dir/plans/ directory is collapsed into tasks/ as
+// planning-mode entries by collapsePlansIntoTasks.
 func NewBackend(dir string) (client.Backend, error) {
 	tasksDir := filepath.Join(dir, "tasks")
 	if err := os.MkdirAll(tasksDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create tasks dir: %w", err)
 	}
-	plansDir := filepath.Join(dir, "plans")
-	if err := os.MkdirAll(plansDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create plans dir: %w", err)
+	if err := collapsePlansIntoTasks(dir); err != nil {
+		return nil, fmt.Errorf("collapse plans into tasks: %w", err)
 	}
 	b := &backend{dir: dir}
 	b.tasks = &tasksRepository{dir: dir}
 	b.comments = &commentsRepository{dir: dir}
-	b.plans = &plansRepository{dir: dir}
-	b.planComments = &planCommentsRepository{dir: dir}
 	b.events = &eventsRepository{dir: dir}
 	b.cursors = &actorCursorsRepository{dir: dir}
 	return b, nil
@@ -67,14 +62,6 @@ func (b *backend) Tasks() client.TasksRepository {
 
 func (b *backend) Comments() client.CommentsRepository {
 	return b.comments
-}
-
-func (b *backend) Plans() client.PlansRepository {
-	return b.plans
-}
-
-func (b *backend) PlanComments() client.PlanCommentsRepository {
-	return b.planComments
 }
 
 func (b *backend) Events() client.EventsRepository {

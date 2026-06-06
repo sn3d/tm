@@ -97,12 +97,16 @@ var createCmd = &cli.Command{
 			plan = draft.Plan
 		}
 
+		// --plan is the legacy alias for --parent; both target ParentID on the
+		// unified task entity.
+		if parent == "" {
+			parent = plan
+		}
 		id, err := c.CreateTask(client.CreateTaskInput{
 			Subject:       subject,
 			Description:   description,
 			AssignedAgent: assigned,
 			DependsOn:     dependsOn,
-			PlanID:        plan,
 			ParentID:      parent,
 			Labels:        labels,
 			Mode:          mode,

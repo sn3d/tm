@@ -14,7 +14,6 @@ type Task struct {
 	State         TaskState
 	AssignedAgent string
 	DependsOn     []TaskID
-	PlanID        PlanID // DEPRECATED: use ParentID. Kept until commit 2 of the plan/task collapse.
 	ParentID      TaskID // empty string => top-level task; self-reference forming the hierarchy
 	Labels        []string
 	Mode          TaskMode
@@ -68,14 +67,13 @@ func ParseTaskMode(s string) (TaskMode, error) {
 
 // CreateTaskInput is the parameter bag for Client.CreateTask. Optional
 // fields take their zero value's natural meaning: empty AssignedAgent =
-// unassigned, empty PlanID/ParentID = standalone/top-level, nil DependsOn
-// = no deps, nil Labels = no labels, empty Mode = TaskModeDefault.
+// unassigned, empty ParentID = top-level, nil DependsOn = no deps, nil
+// Labels = no labels, empty Mode = TaskModeDefault.
 type CreateTaskInput struct {
 	Subject       string
 	Description   string
 	AssignedAgent string
 	DependsOn     []TaskID
-	PlanID        PlanID
 	ParentID      TaskID
 	Labels        []string
 	Mode          TaskMode
@@ -91,7 +89,6 @@ type EditTaskInput struct {
 	State         TaskState
 	AssignedAgent string
 	DependsOn     []TaskID
-	PlanID        PlanID
 	ParentID      TaskID
 	Labels        []string
 	Mode          TaskMode
@@ -108,10 +105,6 @@ type TasksRepository interface {
 	// GetAll returns every task ordered by UpdatedAt descending (most
 	// recently changed first), with ID as a tiebreaker.
 	GetAll() (t []Task, err error)
-	// GetByPlan returns tasks for the given plan, ordered like GetAll.
-	// DEPRECATED: tasks now reference parents via ParentID; use GetByParent.
-	// Kept until commit 2 of the plan/task collapse.
-	GetByPlan(planID PlanID) (t []Task, err error)
 	// GetByParent returns tasks whose ParentID matches the given id, ordered
 	// like GetAll. Pass "" to list top-level tasks (no parent).
 	GetByParent(parentID TaskID) (t []Task, err error)

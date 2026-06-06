@@ -10,6 +10,8 @@ import (
 // auto-detects TTY and respects NO_COLOR, so output stays clean when piped.
 func TaskStateBadge(s client.TaskState) string {
 	switch s {
+	case client.TaskStateDraft:
+		return color.YellowString("📝 draft")
 	case client.TaskStateTodo:
 		return color.YellowString("📋 todo")
 	case client.TaskStateInProgress:
@@ -21,24 +23,6 @@ func TaskStateBadge(s client.TaskState) string {
 	case client.TaskStateDone:
 		return color.GreenString("✅ done")
 	case client.TaskStateCancelled:
-		return color.HiBlackString("🚫 cancelled")
-	default:
-		return color.HiBlackString("❓ unknown")
-	}
-}
-
-// PlanStateBadge mirrors TaskStateBadge for plan states.
-func PlanStateBadge(s client.PlanState) string {
-	switch s {
-	case client.PlanStateDraft:
-		return color.YellowString("📝 draft")
-	case client.PlanStateActive:
-		return color.CyanString("🔄 active")
-	case client.PlanStateOnHold:
-		return color.HiYellowString("⏸ on_hold")
-	case client.PlanStateCompleted:
-		return color.GreenString("✅ completed")
-	case client.PlanStateCancelled:
 		return color.HiBlackString("🚫 cancelled")
 	default:
 		return color.HiBlackString("❓ unknown")

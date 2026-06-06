@@ -60,9 +60,6 @@ func (c *Client) CreateTask(in CreateTaskInput) (TaskID, error) {
 	if err := c.validateDependencies("", in.DependsOn); err != nil {
 		return "", err
 	}
-	if err := c.validatePlan(in.PlanID); err != nil {
-		return "", err
-	}
 	if err := c.validateParent("", in.ParentID); err != nil {
 		return "", err
 	}
@@ -76,7 +73,6 @@ func (c *Client) CreateTask(in CreateTaskInput) (TaskID, error) {
 		State:         TaskStateDefault,
 		AssignedAgent: in.AssignedAgent,
 		DependsOn:     in.DependsOn,
-		PlanID:        in.PlanID,
 		ParentID:      in.ParentID,
 		Labels:        in.Labels,
 		Mode:          mode,
@@ -87,9 +83,6 @@ func (c *Client) CreateTask(in CreateTaskInput) (TaskID, error) {
 	payload := map[string]any{"subject": in.Subject}
 	if in.AssignedAgent != "" {
 		payload["assigned_agent"] = in.AssignedAgent
-	}
-	if in.PlanID != "" {
-		payload["plan_id"] = in.PlanID
 	}
 	if in.ParentID != "" {
 		payload["parent_id"] = in.ParentID
@@ -125,9 +118,6 @@ func (c *Client) EditTask(id TaskID, in EditTaskInput) error {
 	if err := c.validateDependencies(id, in.DependsOn); err != nil {
 		return err
 	}
-	if err := c.validatePlan(in.PlanID); err != nil {
-		return err
-	}
 	if err := c.validateParent(id, in.ParentID); err != nil {
 		return err
 	}
@@ -143,7 +133,6 @@ func (c *Client) EditTask(id TaskID, in EditTaskInput) error {
 	t.State = in.State
 	t.AssignedAgent = in.AssignedAgent
 	t.DependsOn = in.DependsOn
-	t.PlanID = in.PlanID
 	t.ParentID = in.ParentID
 	t.Labels = in.Labels
 	t.Mode = mode
@@ -188,11 +177,6 @@ func (c *Client) emitTaskEditEvents(prev, next Task) {
 			"to":   append([]TaskID(nil), next.DependsOn...),
 		}})
 	}
-	if prev.PlanID != next.PlanID {
-		c.emit(&Event{Kind: EventTaskPlanChanged, TaskID: next.ID, Payload: map[string]any{
-			"from": prev.PlanID, "to": next.PlanID,
-		}})
-	}
 	if prev.ParentID != next.ParentID {
 		c.emit(&Event{Kind: EventTaskParentChanged, TaskID: next.ID, Payload: map[string]any{
 			"from": prev.ParentID, "to": next.ParentID,
@@ -214,22 +198,6 @@ func (c *Client) emitTaskEditEvents(prev, next Task) {
 func equalStrings(a, b []string) bool { return reflect.DeepEqual(a, b) }
 
 func equalIDs(a, b []TaskID) bool { return reflect.DeepEqual(a, b) }
-
-// validatePlan checks that a non-empty planID refers to an existing plan.
-// An empty planID is treated as "standalone" and always passes.
-func (c *Client) validatePlan(planID PlanID) error {
-	if planID == "" {
-		return nil
-	}
-	p, err := c.backend.Plans().GetByID(planID)
-	if err != nil {
-		return fmt.Errorf("check plan %q: %w", planID, err)
-	}
-	if p == nil {
-		return &NotFoundError{Resource: "plan", ID: planID}
-	}
-	return nil
-}
 
 // validateParent checks that a non-empty parentID refers to an existing task
 // and is not selfID (a task cannot be its own parent). An empty parentID is
@@ -379,92 +347,6 @@ func (c *Client) AddTaskComment(id TaskID, who string, comment string) error {
 	return nil
 }
 
-// CreatePlan adds a new plan. The new plan starts in PlanStateDefault (draft).
-// Pass an empty assignedAgent to leave it unassigned. The repository assigns
-// the ID, which is returned.
-func (c *Client) CreatePlan(subject, description, assignedAgent string) (PlanID, error) {
-	p := Plan{
-		Subject:       subject,
-		Description:   description,
-		State:         PlanStateDefault,
-		AssignedAgent: assignedAgent,
-	}
-	if err := c.backend.Plans().Save(&p); err != nil {
-		return "", fmt.Errorf("save plan: %w", err)
-	}
-	payload := map[string]any{"subject": subject}
-	if assignedAgent != "" {
-		payload["assigned_agent"] = assignedAgent
-	}
-	c.emit(&Event{Kind: EventPlanCreated, PlanID: p.ID, Payload: payload})
-	return p.ID, nil
-}
-
-// EditPlan overwrites the mutable fields of an existing plan. Returns a
-// NotFoundError if no plan with the given ID exists.
-func (c *Client) EditPlan(id PlanID, subject, description string, state PlanState, assignedAgent string) error {
-	p, err := c.backend.Plans().GetByID(id)
-	if err != nil {
-		return fmt.Errorf("load plan %q: %w", id, err)
-	}
-	if p == nil {
-		return &NotFoundError{Resource: "plan", ID: id}
-	}
-	prev := *p
-	p.Subject = subject
-	p.Description = description
-	p.State = state
-	p.AssignedAgent = assignedAgent
-	if err := c.backend.Plans().Save(p); err != nil {
-		return fmt.Errorf("save plan %q: %w", id, err)
-	}
-	c.emitPlanEditEvents(prev, *p)
-	return nil
-}
-
-func (c *Client) emitPlanEditEvents(prev, next Plan) {
-	if prev.Subject != next.Subject || prev.Description != next.Description {
-		from := map[string]any{}
-		to := map[string]any{}
-		if prev.Subject != next.Subject {
-			from["subject"] = prev.Subject
-			to["subject"] = next.Subject
-		}
-		if prev.Description != next.Description {
-			from["description"] = prev.Description
-			to["description"] = next.Description
-		}
-		c.emit(&Event{Kind: EventPlanEdited, PlanID: next.ID, Payload: map[string]any{"from": from, "to": to}})
-	}
-	if prev.State != next.State {
-		c.emit(&Event{Kind: EventPlanStateChanged, PlanID: next.ID, Payload: map[string]any{
-			"from": string(prev.State), "to": string(next.State),
-		}})
-	}
-	if prev.AssignedAgent != next.AssignedAgent {
-		c.emit(&Event{Kind: EventPlanAssigned, PlanID: next.ID, Payload: map[string]any{
-			"from": prev.AssignedAgent, "to": next.AssignedAgent,
-		}})
-	}
-}
-
-// GetPlan returns the plan with the given ID, or a NotFoundError if it doesn't exist.
-func (c *Client) GetPlan(id PlanID) (*Plan, error) {
-	p, err := c.backend.Plans().GetByID(id)
-	if err != nil {
-		return nil, err
-	}
-	if p == nil {
-		return nil, &NotFoundError{Resource: "plan", ID: id}
-	}
-	return p, nil
-}
-
-// ListPlans returns all plans.
-func (c *Client) ListPlans() ([]Plan, error) {
-	return c.backend.Plans().GetAll()
-}
-
 // GetTasksByParent returns all tasks whose ParentID matches the given id.
 // An empty id is treated as "top-level" and returns tasks with no parent;
 // no existence check is performed in that case. For a non-empty id the
@@ -486,64 +368,6 @@ func (c *Client) GetTasksByParent(id TaskID) ([]Task, error) {
 	return tasks, nil
 }
 
-// GetTasksByPlan returns all tasks associated with the given plan. An empty
-// id is treated as "standalone" and returns tasks with no plan; validation
-// is skipped in that case. For a non-empty id the plan must exist, otherwise
-// a NotFoundError is returned.
-func (c *Client) GetTasksByPlan(id PlanID) ([]Task, error) {
-	if id != "" {
-		p, err := c.backend.Plans().GetByID(id)
-		if err != nil {
-			return nil, fmt.Errorf("load plan %q: %w", id, err)
-		}
-		if p == nil {
-			return nil, &NotFoundError{Resource: "plan", ID: id}
-		}
-	}
-	tasks, err := c.backend.Tasks().GetByPlan(id)
-	if err != nil {
-		return nil, fmt.Errorf("load tasks for plan %q: %w", id, err)
-	}
-	return tasks, nil
-}
-
-// AddPlanComment appends a new comment authored by `who` to the given plan.
-// Returns a NotFoundError if the plan doesn't exist.
-func (c *Client) AddPlanComment(id PlanID, who string, comment string) error {
-	p, err := c.backend.Plans().GetByID(id)
-	if err != nil {
-		return fmt.Errorf("load plan %q: %w", id, err)
-	}
-	if p == nil {
-		return &NotFoundError{Resource: "plan", ID: id}
-	}
-	cm := Comment{Who: who, Comment: comment}
-	if err := c.backend.PlanComments().Add(id, &cm); err != nil {
-		return fmt.Errorf("add comment to plan %q: %w", id, err)
-	}
-	c.emit(&Event{Kind: EventPlanCommented, PlanID: id, Payload: map[string]any{
-		"comment_id": cm.ID, "who": who,
-	}})
-	return nil
-}
-
-// GetPlanComments returns all comments attached to the given plan, or a
-// NotFoundError if the plan doesn't exist.
-func (c *Client) GetPlanComments(id PlanID) ([]Comment, error) {
-	p, err := c.backend.Plans().GetByID(id)
-	if err != nil {
-		return nil, fmt.Errorf("load plan %q: %w", id, err)
-	}
-	if p == nil {
-		return nil, &NotFoundError{Resource: "plan", ID: id}
-	}
-	comments, err := c.backend.PlanComments().GetForPlan(id)
-	if err != nil {
-		return nil, fmt.Errorf("load comments for plan %q: %w", id, err)
-	}
-	return comments, nil
-}
-
 // ListEvents returns journal entries matching the filter (newest first).
 func (c *Client) ListEvents(filter EventFilter) ([]Event, error) {
 	events, err := c.backend.Events().List(filter)
@@ -558,8 +382,8 @@ func (c *Client) ListEvents(filter EventFilter) ([]Event, error) {
 func (c *Client) emit(e *Event) {
 	e.Actor = c.actor
 	if err := c.backend.Events().Append(e); err != nil {
-		log.Printf("journal append failed (kind=%s task=%s plan=%s): %v",
-			e.Kind, e.TaskID, e.PlanID, err)
+		log.Printf("journal append failed (kind=%s task=%s): %v",
+			e.Kind, e.TaskID, err)
 	}
 }
 

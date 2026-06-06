@@ -80,7 +80,6 @@ var editCmd = &cli.Command{
 		state := t.State
 		assigned := t.AssignedAgent
 		dependsOn := t.DependsOn
-		planID := t.PlanID
 		parentID := t.ParentID
 		labels := t.Labels
 		mode := t.Mode
@@ -103,7 +102,7 @@ var editCmd = &cli.Command{
 				Assigned:    assigned,
 				State:       state.String(),
 				DependsOn:   dependsOn,
-				Plan:        planID,
+				Plan:        parentID,
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("specify at least one field flag when not running in a terminal")
@@ -118,7 +117,7 @@ var editCmd = &cli.Command{
 			description = draft.Description
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
-			planID = draft.Plan
+			parentID = draft.Plan
 			if draft.State != "" {
 				state, err = client.ParseTaskState(draft.State)
 				if err != nil {
@@ -145,8 +144,9 @@ var editCmd = &cli.Command{
 			if command.IsSet("depends-on") {
 				dependsOn = parseDependsOn(command.String("depends-on"))
 			}
+			// --plan is the legacy alias for --parent; both target ParentID.
 			if command.IsSet("plan") {
-				planID = command.String("plan")
+				parentID = command.String("plan")
 			}
 			if command.IsSet("parent") {
 				parentID = command.String("parent")
@@ -168,7 +168,6 @@ var editCmd = &cli.Command{
 			State:         state,
 			AssignedAgent: assigned,
 			DependsOn:     dependsOn,
-			PlanID:        planID,
 			ParentID:      parentID,
 			Labels:        labels,
 			Mode:          mode,

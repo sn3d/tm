@@ -73,7 +73,7 @@ func TestEventsRepository_Filters(t *testing.T) {
 		{Kind: client.EventTaskCreated, TaskID: "1", Actor: "alice"},
 		{Kind: client.EventTaskAssigned, TaskID: "1", Actor: "bob"},
 		{Kind: client.EventTaskCreated, TaskID: "2", Actor: "alice"},
-		{Kind: client.EventPlanCreated, PlanID: "PLAN-1", Actor: "carol"},
+		{Kind: client.EventTaskParentChanged, TaskID: "3", Actor: "carol"},
 	}
 	for _, e := range seed {
 		if err := b.Events().Append(e); err != nil {
@@ -87,7 +87,6 @@ func TestEventsRepository_Filters(t *testing.T) {
 		want   int
 	}{
 		{"by task", client.EventFilter{TaskID: "1"}, 2},
-		{"by plan", client.EventFilter{PlanID: "PLAN-1"}, 1},
 		{"by actor", client.EventFilter{Actor: "alice"}, 2},
 		{"by kind", client.EventFilter{Kinds: []client.EventKind{client.EventTaskAssigned}}, 1},
 		{"by kinds OR", client.EventFilter{Kinds: []client.EventKind{client.EventTaskCreated, client.EventTaskAssigned}}, 3},

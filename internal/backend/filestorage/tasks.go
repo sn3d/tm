@@ -62,7 +62,6 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 			State:         t.State.String(),
 			AssignedAgent: t.AssignedAgent,
 			DependsOn:     t.DependsOn,
-			PlanID:        t.PlanID,
 			ParentID:      t.ParentID,
 			Labels:        t.Labels,
 			Mode:          modeFrontmatter(t.Mode),
@@ -169,7 +168,6 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 		State:         state,
 		AssignedAgent: tf.frontmatter.AssignedAgent,
 		DependsOn:     tf.frontmatter.DependsOn,
-		PlanID:        tf.frontmatter.PlanID,
 		ParentID:      tf.frontmatter.ParentID,
 		Labels:        tf.frontmatter.Labels,
 		Mode:          mode,
@@ -185,22 +183,6 @@ func modeFrontmatter(m client.TaskMode) string {
 		return ""
 	}
 	return m.String()
-}
-
-// GetByPlan returns every task whose PlanID matches the given plan. Walks
-// every file under tasks/ since the file layout has no plan-keyed index.
-func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error) {
-	all, err := tr.GetAll()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]client.Task, 0)
-	for _, t := range all {
-		if t.PlanID == planID {
-			out = append(out, t)
-		}
-	}
-	return out, nil
 }
 
 // GetByParent returns every task whose ParentID matches the given id. Walks

@@ -45,7 +45,7 @@ var getCmd = &cli.Command{
 		fmt.Printf("%s: %s\n", bold(t.ID), t.Subject)
 		fmt.Printf("   %s %s\n", dim("status:"), tui.TaskStateBadge(t.State))
 		fmt.Printf("   %s %s\n", dim("agent:"), tui.Dash(t.AssignedAgent))
-		fmt.Printf("   %s %s\n", dim("plan:"), tui.Dash(t.PlanID))
+		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(t.ParentID))
 		if len(t.DependsOn) > 0 {
 			fmt.Printf("   %s %s\n", dim("depends on:"), strings.Join(t.DependsOn, ", "))
 		}

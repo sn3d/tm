@@ -8,8 +8,8 @@ import (
 )
 
 // Inbox is the per-actor view of "what needs my attention now and what
-// changed since I last looked". Tasks and Plans are the current open/active
-// items assigned to the actor; RecentChanges is the slice of journal events
+// changed since I last looked". Tasks are the current open/active items
+// assigned to the actor; RecentChanges is the slice of journal events
 // touching those items (or reassignments TO the actor) since LastSeenAt.
 // Resumable is the subset of Tasks whose UpdatedAt is after LastSeenAt —
 // i.e. tasks the agent owns that changed since the last heartbeat (typically
@@ -26,7 +26,6 @@ import (
 type Inbox struct {
 	Actor         string
 	Tasks         []Task
-	Plans         []Plan
 	Resumable     []Task
 	RecentChanges []Event
 	LastSeenAt    time.Time
@@ -61,11 +60,7 @@ func (c *Client) inbox(actor string, advance bool) (*Inbox, error) {
 	if err != nil {
 		return nil, err
 	}
-	plans, err := c.assignedPlans(actor)
-	if err != nil {
-		return nil, err
-	}
-	changes, err := c.recentChanges(actor, tasks, plans, lastSeen)
+	changes, err := c.recentChanges(actor, tasks, lastSeen)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +74,6 @@ func (c *Client) inbox(actor string, advance bool) (*Inbox, error) {
 	return &Inbox{
 		Actor:         actor,
 		Tasks:         tasks,
-		Plans:         plans,
 		Resumable:     resumableTasks(tasks, lastSeen),
 		RecentChanges: changes,
 		LastSeenAt:    lastSeen,
@@ -122,35 +116,11 @@ func (c *Client) assignedTasks(actor string) ([]Task, error) {
 	return out, nil
 }
 
-func (c *Client) assignedPlans(actor string) ([]Plan, error) {
-	all, err := c.backend.Plans().GetAll()
-	if err != nil {
-		return nil, fmt.Errorf("list plans: %w", err)
-	}
-	out := make([]Plan, 0)
-	for _, p := range all {
-		if p.AssignedAgent != actor {
-			continue
-		}
-		switch p.State.Category() {
-		case CategoryOpen, CategoryActive:
-			out = append(out, p)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].UpdatedAt.After(out[j].UpdatedAt)
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out, nil
-}
-
 // recentChanges returns events since `since` that involve the actor: either
 // the event touches an item currently assigned to them, or it is a
 // reassignment to them. Events authored by the actor are excluded — your own
 // actions are not news. Output is oldest-first for chronological reading.
-func (c *Client) recentChanges(actor string, tasks []Task, plans []Plan, since time.Time) ([]Event, error) {
+func (c *Client) recentChanges(actor string, tasks []Task, since time.Time) ([]Event, error) {
 	events, err := c.backend.Events().List(EventFilter{Since: since})
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
@@ -160,17 +130,13 @@ func (c *Client) recentChanges(actor string, tasks []Task, plans []Plan, since t
 	for _, t := range tasks {
 		taskIDs[t.ID] = struct{}{}
 	}
-	planIDs := make(map[PlanID]struct{}, len(plans))
-	for _, p := range plans {
-		planIDs[p.ID] = struct{}{}
-	}
 
 	out := make([]Event, 0, len(events))
 	for _, e := range events {
 		if e.Actor == actor {
 			continue
 		}
-		if c.eventInvolvesActor(e, actor, taskIDs, planIDs) {
+		if c.eventInvolvesActor(e, actor, taskIDs) {
 			out = append(out, e)
 		}
 	}
@@ -183,19 +149,13 @@ func (c *Client) recentChanges(actor string, tasks []Task, plans []Plan, since t
 	return out, nil
 }
 
-func (c *Client) eventInvolvesActor(e Event, actor string, taskIDs map[TaskID]struct{}, planIDs map[PlanID]struct{}) bool {
+func (c *Client) eventInvolvesActor(e Event, actor string, taskIDs map[TaskID]struct{}) bool {
 	if e.TaskID != "" {
 		if _, ok := taskIDs[e.TaskID]; ok {
 			return true
 		}
 	}
-	if e.PlanID != "" {
-		if _, ok := planIDs[e.PlanID]; ok {
-			return true
-		}
-	}
-	switch e.Kind {
-	case EventTaskAssigned, EventPlanAssigned:
+	if e.Kind == EventTaskAssigned {
 		if to, _ := e.Payload["to"].(string); to == actor {
 			return true
 		}

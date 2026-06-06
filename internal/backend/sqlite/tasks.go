@@ -66,19 +66,18 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 	}
 
 	const upsertTask = `
-		INSERT INTO tasks (id, subject, description, state, assigned_agent, plan_id, parent_id, labels, mode, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject        = excluded.subject,
 			description    = excluded.description,
 			state          = excluded.state,
 			assigned_agent = excluded.assigned_agent,
-			plan_id        = excluded.plan_id,
 			parent_id      = excluded.parent_id,
 			labels         = excluded.labels,
 			mode           = excluded.mode,
 			updated_at     = excluded.updated_at`
-	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.PlanID, t.ParentID, labelsJSON, string(t.Mode),
+	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.ParentID, labelsJSON, string(t.Mode),
 		t.CreatedAt.Format(time.RFC3339Nano), t.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("upsert task %q: %w", t.ID, err)
 	}
@@ -127,7 +126,7 @@ func loadTaskCreatedAt(tx *sql.Tx, id client.TaskID) (*time.Time, error) {
 
 // GetByID returns the task with the given ID, or (nil, nil) when no such row exists.
 func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, parent_id, labels, mode, created_at, updated_at FROM tasks WHERE id = ?`
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at FROM tasks WHERE id = ?`
 	var (
 		t          client.Task
 		state      string
@@ -136,7 +135,7 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 		createdStr string
 		updatedStr string
 	)
-	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr)
+	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -157,24 +156,15 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 // GetAll returns every task in the repository, ordered by UpdatedAt
 // descending (most recently changed first). ID breaks ties.
 func (tr *tasksRepository) GetAll() ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, parent_id, labels, mode, created_at, updated_at
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
 		FROM tasks ORDER BY updated_at DESC, id`
 	return tr.queryTasks(q)
-}
-
-// GetByPlan returns every task whose PlanID matches the given plan, ordered
-// by UpdatedAt descending. Returns an empty slice when no tasks reference
-// the plan.
-func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, parent_id, labels, mode, created_at, updated_at
-		FROM tasks WHERE plan_id = ? ORDER BY updated_at DESC, id`
-	return tr.queryTasks(q, planID)
 }
 
 // GetByParent returns every task whose ParentID matches the given id, ordered
 // by UpdatedAt descending. Pass "" to list top-level tasks.
 func (tr *tasksRepository) GetByParent(parentID client.TaskID) ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, parent_id, labels, mode, created_at, updated_at
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
 		FROM tasks WHERE parent_id = ? ORDER BY updated_at DESC, id`
 	return tr.queryTasks(q, parentID)
 }
@@ -196,7 +186,7 @@ func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, err
 			createdStr string
 			updatedStr string
 		)
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
 		if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr); err != nil {
