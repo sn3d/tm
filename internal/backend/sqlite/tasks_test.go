@@ -309,14 +309,14 @@ func TestNewBackend_FreshDBAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 2
+	const want = 3
 	if version != want {
 		t.Errorf("expected goose version %d, got %d", want, version)
 	}
 }
 
 // A legacy database (tasks/plans present, no goose tracking) should be
-// stamped at version 1 and then 00002_add_timestamps should apply on top.
+// stamped at version 1 and then later migrations should apply on top.
 func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
 	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-legacy-stamp-%d.db", time.Now().UnixNano()))
 	t.Cleanup(func() { _ = os.Remove(dbPath) })
@@ -354,9 +354,9 @@ func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 2
+	const want = 3
 	if version != want {
-		t.Errorf("expected goose version %d after legacy reconciliation + timestamp migration, got %d", want, version)
+		t.Errorf("expected goose version %d after legacy reconciliation + later migrations, got %d", want, version)
 	}
 }
 

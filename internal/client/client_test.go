@@ -154,6 +154,16 @@ func (s *stubTasks) GetByPlan(planID PlanID) ([]Task, error) {
 	return out, nil
 }
 
+func (s *stubTasks) GetByParent(parentID TaskID) ([]Task, error) {
+	out := make([]Task, 0)
+	for _, t := range s.store {
+		if t.ParentID == parentID {
+			out = append(out, *t)
+		}
+	}
+	return out, nil
+}
+
 type stubComments struct{}
 
 func (stubComments) Add(TaskID, *Comment) error           { return nil }

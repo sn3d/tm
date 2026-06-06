@@ -14,9 +14,56 @@ type Task struct {
 	State         TaskState
 	AssignedAgent string
 	DependsOn     []TaskID
-	PlanID        PlanID // empty string => standalone task
+	PlanID        PlanID // DEPRECATED: use ParentID. Kept until commit 2 of the plan/task collapse.
+	ParentID      TaskID // empty string => top-level task; self-reference forming the hierarchy
+	Labels        []string
+	Mode          TaskMode
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// TaskMode is a render/filter hint on a task. It does not change workflow,
+// state transitions, or any backend behavior — only how UIs treat the row.
+// `standard` is the default; `planning` marks a task that represents a plan
+// (typically with children via ParentID) so TUI / filters can render it
+// distinctly.
+type TaskMode string
+
+const (
+	TaskModeStandard TaskMode = "standard"
+	TaskModePlanning TaskMode = "planning"
+)
+
+// TaskModeDefault is assigned to newly created tasks when no mode is set.
+const TaskModeDefault = TaskModeStandard
+
+// TaskModes is the canonical ordered list of valid task modes.
+var TaskModes = []TaskMode{
+	TaskModeStandard,
+	TaskModePlanning,
+}
+
+func (m TaskMode) String() string { return string(m) }
+
+func (m TaskMode) Valid() bool {
+	switch m {
+	case TaskModeStandard, TaskModePlanning:
+		return true
+	}
+	return false
+}
+
+// ParseTaskMode converts a string into a TaskMode. The empty string maps to
+// TaskModeDefault so callers can pass "" to mean "leave default".
+func ParseTaskMode(s string) (TaskMode, error) {
+	if s == "" {
+		return TaskModeDefault, nil
+	}
+	m := TaskMode(s)
+	if !m.Valid() {
+		return "", fmt.Errorf("invalid task mode: %q", s)
+	}
+	return m, nil
 }
 
 type TasksRepository interface {
@@ -31,13 +78,22 @@ type TasksRepository interface {
 	// recently changed first), with ID as a tiebreaker.
 	GetAll() (t []Task, err error)
 	// GetByPlan returns tasks for the given plan, ordered like GetAll.
+	// DEPRECATED: tasks now reference parents via ParentID; use GetByParent.
+	// Kept until commit 2 of the plan/task collapse.
 	GetByPlan(planID PlanID) (t []Task, err error)
+	// GetByParent returns tasks whose ParentID matches the given id, ordered
+	// like GetAll. Pass "" to list top-level tasks (no parent).
+	GetByParent(parentID TaskID) (t []Task, err error)
 }
 
 // TaskState is the lifecycle state of a task.
 type TaskState string
 
 const (
+	// TaskStateDraft is the initial "shaping it" state — typically used by
+	// planning-mode tasks before they're handed off, but available to any
+	// task. Category: open.
+	TaskStateDraft      TaskState = "draft"
 	TaskStateTodo       TaskState = "todo"
 	TaskStateInProgress TaskState = "in_progress"
 	TaskStateBlocked    TaskState = "blocked"
@@ -51,6 +107,7 @@ const TaskStateDefault = TaskStateTodo
 
 // TaskStates is the canonical ordered list of valid task states.
 var TaskStates = []TaskState{
+	TaskStateDraft,
 	TaskStateTodo,
 	TaskStateInProgress,
 	TaskStateBlocked,
@@ -63,7 +120,7 @@ func (s TaskState) String() string { return string(s) }
 
 func (s TaskState) Valid() bool {
 	switch s {
-	case TaskStateTodo, TaskStateInProgress, TaskStateBlocked,
+	case TaskStateDraft, TaskStateTodo, TaskStateInProgress, TaskStateBlocked,
 		TaskStateInReview, TaskStateDone, TaskStateCancelled:
 		return true
 	}
@@ -72,7 +129,7 @@ func (s TaskState) Valid() bool {
 
 func (s TaskState) Category() Category {
 	switch s {
-	case TaskStateTodo:
+	case TaskStateDraft, TaskStateTodo:
 		return CategoryOpen
 	case TaskStateInProgress, TaskStateBlocked, TaskStateInReview:
 		return CategoryActive

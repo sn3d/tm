@@ -32,6 +32,9 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 	if t.State == "" {
 		t.State = client.TaskStateDefault
 	}
+	if t.Mode == "" {
+		t.Mode = client.TaskModeDefault
+	}
 
 	existing, err := readTaskFile(tr.dir, t.ID)
 	if err != nil {
@@ -60,6 +63,9 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 			AssignedAgent: t.AssignedAgent,
 			DependsOn:     t.DependsOn,
 			PlanID:        t.PlanID,
+			ParentID:      t.ParentID,
+			Labels:        t.Labels,
+			Mode:          modeFrontmatter(t.Mode),
 			CreatedAt:     t.CreatedAt.Format(time.RFC3339Nano),
 			UpdatedAt:     t.UpdatedAt.Format(time.RFC3339Nano),
 		},
@@ -144,6 +150,10 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse state for task %q: %w", tf.frontmatter.ID, err)
 	}
+	mode, err := client.ParseTaskMode(tf.frontmatter.Mode)
+	if err != nil {
+		return nil, fmt.Errorf("parse mode for task %q: %w", tf.frontmatter.ID, err)
+	}
 	createdAt, err := parseTime(tf.frontmatter.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at for task %q: %w", tf.frontmatter.ID, err)
@@ -160,9 +170,21 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 		AssignedAgent: tf.frontmatter.AssignedAgent,
 		DependsOn:     tf.frontmatter.DependsOn,
 		PlanID:        tf.frontmatter.PlanID,
+		ParentID:      tf.frontmatter.ParentID,
+		Labels:        tf.frontmatter.Labels,
+		Mode:          mode,
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
 	}, nil
+}
+
+// modeFrontmatter returns the on-disk string for a TaskMode. The default
+// (standard) writes as "" so frontmatter stays clean for the common case.
+func modeFrontmatter(m client.TaskMode) string {
+	if m == client.TaskModeDefault {
+		return ""
+	}
+	return m.String()
 }
 
 // GetByPlan returns every task whose PlanID matches the given plan. Walks
@@ -175,6 +197,23 @@ func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error
 	out := make([]client.Task, 0)
 	for _, t := range all {
 		if t.PlanID == planID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// GetByParent returns every task whose ParentID matches the given id. Walks
+// every file under tasks/ since the file layout has no parent-keyed index.
+// Pass "" to list top-level tasks.
+func (tr *tasksRepository) GetByParent(parentID client.TaskID) ([]client.Task, error) {
+	all, err := tr.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]client.Task, 0)
+	for _, t := range all {
+		if t.ParentID == parentID {
 			out = append(out, t)
 		}
 	}
