@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,6 +38,9 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 	if t.State == "" {
 		t.State = client.TaskStateDefault
 	}
+	if t.Mode == "" {
+		t.Mode = client.TaskModeDefault
+	}
 
 	// CreatedAt resolution, in priority order:
 	//   1. existing stored value (preserve across updates)
@@ -56,17 +60,24 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 	}
 	t.UpdatedAt = now
 
+	labelsJSON, err := marshalLabels(t.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels for task %q: %w", t.ID, err)
+	}
+
 	const upsertTask = `
-		INSERT INTO tasks (id, subject, description, state, assigned_agent, plan_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject        = excluded.subject,
 			description    = excluded.description,
 			state          = excluded.state,
 			assigned_agent = excluded.assigned_agent,
-			plan_id        = excluded.plan_id,
+			parent_id      = excluded.parent_id,
+			labels         = excluded.labels,
+			mode           = excluded.mode,
 			updated_at     = excluded.updated_at`
-	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.PlanID,
+	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.ParentID, labelsJSON, string(t.Mode),
 		t.CreatedAt.Format(time.RFC3339Nano), t.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("upsert task %q: %w", t.ID, err)
 	}
@@ -115,30 +126,24 @@ func loadTaskCreatedAt(tx *sql.Tx, id client.TaskID) (*time.Time, error) {
 
 // GetByID returns the task with the given ID, or (nil, nil) when no such row exists.
 func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at FROM tasks WHERE id = ?`
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at FROM tasks WHERE id = ?`
 	var (
 		t          client.Task
 		state      string
+		labelsStr  string
+		modeStr    string
 		createdStr string
 		updatedStr string
 	)
-	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &createdStr, &updatedStr)
+	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query task %q: %w", id, err)
 	}
-	parsedState, err := client.ParseTaskState(state)
-	if err != nil {
-		return nil, fmt.Errorf("task %q: %w", id, err)
-	}
-	t.State = parsedState
-	if t.CreatedAt, err = parseSQLTime(createdStr); err != nil {
-		return nil, fmt.Errorf("parse created_at for task %q: %w", id, err)
-	}
-	if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
-		return nil, fmt.Errorf("parse updated_at for task %q: %w", id, err)
+	if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr); err != nil {
+		return nil, err
 	}
 	deps, err := tr.loadDeps(t.ID)
 	if err != nil {
@@ -151,18 +156,17 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 // GetAll returns every task in the repository, ordered by UpdatedAt
 // descending (most recently changed first). ID breaks ties.
 func (tr *tasksRepository) GetAll() ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
 		FROM tasks ORDER BY updated_at DESC, id`
 	return tr.queryTasks(q)
 }
 
-// GetByPlan returns every task whose PlanID matches the given plan, ordered
-// by UpdatedAt descending. Returns an empty slice when no tasks reference
-// the plan.
-func (tr *tasksRepository) GetByPlan(planID client.PlanID) ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, plan_id, created_at, updated_at
-		FROM tasks WHERE plan_id = ? ORDER BY updated_at DESC, id`
-	return tr.queryTasks(q, planID)
+// GetByParent returns every task whose ParentID matches the given id, ordered
+// by UpdatedAt descending. Pass "" to list top-level tasks.
+func (tr *tasksRepository) GetByParent(parentID client.TaskID) ([]client.Task, error) {
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
+		FROM tasks WHERE parent_id = ? ORDER BY updated_at DESC, id`
+	return tr.queryTasks(q, parentID)
 }
 
 func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, error) {
@@ -177,22 +181,16 @@ func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, err
 		var (
 			t          client.Task
 			state      string
+			labelsStr  string
+			modeStr    string
 			createdStr string
 			updatedStr string
 		)
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.PlanID, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
-		parsedState, err := client.ParseTaskState(state)
-		if err != nil {
-			return nil, fmt.Errorf("task %q: %w", t.ID, err)
-		}
-		t.State = parsedState
-		if t.CreatedAt, err = parseSQLTime(createdStr); err != nil {
-			return nil, fmt.Errorf("parse created_at for task %q: %w", t.ID, err)
-		}
-		if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
-			return nil, fmt.Errorf("parse updated_at for task %q: %w", t.ID, err)
+		if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr); err != nil {
+			return nil, err
 		}
 		tasks = append(tasks, t)
 	}
@@ -207,6 +205,63 @@ func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, err
 		tasks[i].DependsOn = deps
 	}
 	return tasks, nil
+}
+
+// hydrateTaskScalars fills the parsed non-dependency scalars on t from their
+// raw TEXT-column representations. Empty `labels` and `mode` (from rows
+// inserted before this migration) decode to nil and TaskModeDefault.
+func hydrateTaskScalars(t *client.Task, state, labelsStr, modeStr, createdStr, updatedStr string) error {
+	parsedState, err := client.ParseTaskState(state)
+	if err != nil {
+		return fmt.Errorf("task %q: %w", t.ID, err)
+	}
+	t.State = parsedState
+	labels, err := unmarshalLabels(labelsStr)
+	if err != nil {
+		return fmt.Errorf("parse labels for task %q: %w", t.ID, err)
+	}
+	t.Labels = labels
+	mode, err := client.ParseTaskMode(modeStr)
+	if err != nil {
+		return fmt.Errorf("parse mode for task %q: %w", t.ID, err)
+	}
+	t.Mode = mode
+	if t.CreatedAt, err = parseSQLTime(createdStr); err != nil {
+		return fmt.Errorf("parse created_at for task %q: %w", t.ID, err)
+	}
+	if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
+		return fmt.Errorf("parse updated_at for task %q: %w", t.ID, err)
+	}
+	return nil
+}
+
+// marshalLabels encodes the label slice as a JSON array for the labels TEXT
+// column. nil and empty slices both encode as `[]` for round-trip stability.
+func marshalLabels(labels []string) (string, error) {
+	if len(labels) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(labels)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// unmarshalLabels decodes a JSON array from the labels TEXT column. The empty
+// string (legacy rows predating the column) and "[]" both return nil.
+func unmarshalLabels(s string) ([]string, error) {
+	if s == "" || s == "[]" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // parseSQLTime parses an RFC3339Nano timestamp from a TEXT column. An empty

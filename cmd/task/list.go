@@ -3,6 +3,8 @@ package task
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/sn3d/tm/internal/app"
@@ -11,13 +13,15 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var listCmd = &cli.Command{
-	Name:  "list",
-	Usage: "List all tasks",
+// ListCmd is the top-level `tm list [label]` command.
+var ListCmd = &cli.Command{
+	Name:      "list",
+	Usage:     "List tasks, optionally filtered by label",
+	ArgsUsage: "[label]",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:  "plan",
-			Usage: `Filter tasks by plan ID. Pass --plan "" to list only standalone tasks (no plan).`,
+			Name:  "parent",
+			Usage: `Filter tasks by parent ID. Pass --parent "" to list only top-level tasks.`,
 		},
 	},
 	Action: func(ctx context.Context, command *cli.Command) error {
@@ -27,37 +31,51 @@ var listCmd = &cli.Command{
 			return err
 		}
 
+		label := command.Args().First()
+
 		var tasks []client.Task
-		if command.IsSet("plan") {
-			tasks, err = c.GetTasksByPlan(command.String("plan"))
-		} else {
+		switch {
+		case label != "":
+			tasks, err = c.GetTasksByLabel(label)
+		case command.IsSet("parent"):
+			tasks, err = c.GetTasksByParent(command.String("parent"))
+		default:
 			tasks, err = c.ListTasks()
 		}
 		if err != nil {
 			return err
 		}
 		if len(tasks) == 0 {
-			fmt.Println(color.HiBlackString("No tasks yet. Create one with: tm task create --subject \"...\""))
+			fmt.Println(color.HiBlackString(`No tasks yet. Create one with: tm create --subject "..."`))
 			return nil
 		}
 
+		sort.SliceStable(tasks, func(i, j int) bool {
+			return tasks[i].CreatedAt.Before(tasks[j].CreatedAt)
+		})
+
 		header := color.New(color.Bold).Sprint
-		printRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("PLAN"))
+		printRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("LABELS"), header("PARENT"))
 		for _, t := range tasks {
 			agent := tui.Dash(t.AssignedAgent)
 			if t.AssignedAgent != "" {
 				agent = tui.Truncate(t.AssignedAgent, tui.ColAgentWidth-2)
 			}
-			plan := tui.Dash(t.PlanID)
-			if t.PlanID != "" {
-				plan = tui.Truncate(t.PlanID, tui.ColPlanWidth-2)
+			labels := tui.Dash("")
+			if len(t.Labels) > 0 {
+				labels = tui.Truncate(strings.Join(t.Labels, ","), tui.ColLabelsWidth-2)
+			}
+			parent := tui.Dash(t.ParentID)
+			if t.ParentID != "" {
+				parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
 			}
 			printRow(
 				t.ID,
 				tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
 				tui.TaskStateBadge(t.State),
 				agent,
-				plan,
+				labels,
+				parent,
 			)
 		}
 		return nil
@@ -66,12 +84,13 @@ var listCmd = &cli.Command{
 
 // printRow writes one aligned row to stdout using the fixed column widths.
 // The last column is not padded since there's nothing after it.
-func printRow(id, subject, state, agent, plan string) {
+func printRow(id, subject, state, agent, labels, parent string) {
 	fmt.Println(
 		tui.PadRight(id, tui.ColIDWidth) +
 			tui.PadRight(subject, tui.ColSubjectWidth) +
 			tui.PadRight(state, tui.ColStateWidth) +
 			tui.PadRight(agent, tui.ColAgentWidth) +
-			plan,
+			tui.PadRight(labels, tui.ColLabelsWidth) +
+			parent,
 	)
 }

@@ -10,24 +10,17 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var commentCmd = &cli.Command{
-	Name:  "comment",
-	Usage: "Add a comment to a task",
+// CommentCmd is the top-level `tm comment <id> <text>` command. The author
+// of the comment defaults to the resolved actor (cfg.Actor — same source
+// used to attribute journal events); --who overrides that for one-off uses.
+var CommentCmd = &cli.Command{
+	Name:      "comment",
+	Usage:     "Add a comment to a task",
+	ArgsUsage: "<id> <text>",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:     "id",
-			Usage:    "Task ID where to add comment",
-			Required: true,
-		},
-		&cli.StringFlag{
-			Name:     "who",
-			Usage:    "Who is adding comment to task",
-			Required: true,
-		},
-		&cli.StringFlag{
-			Name:     "comment",
-			Usage:    "Comment to add to task",
-			Required: true,
+			Name:  "who",
+			Usage: "Author of the comment (defaults to current actor)",
 		},
 		app.ActorFlag,
 	},
@@ -39,8 +32,19 @@ var commentCmd = &cli.Command{
 			return err
 		}
 
-		id := command.String("id")
-		if err := c.AddTaskComment(id, command.String("who"), command.String("comment")); err != nil {
+		args := command.Args()
+		if args.Len() < 2 {
+			return fmt.Errorf("usage: tm comment <id> <text>")
+		}
+		id := args.Get(0)
+		text := args.Get(1)
+
+		who := command.String("who")
+		if who == "" {
+			who = cfg.Actor
+		}
+
+		if err := c.AddTaskComment(id, who, text); err != nil {
 			return err
 		}
 		fmt.Printf("%s Added comment to task %s\n", color.GreenString("✓"), color.New(color.Bold).Sprint(id))

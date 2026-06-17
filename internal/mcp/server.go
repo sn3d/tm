@@ -16,14 +16,6 @@ func joinTaskStates() string {
 	return strings.Join(parts, " | ")
 }
 
-func joinPlanStates() string {
-	parts := make([]string, len(client.PlanStates))
-	for i, s := range client.PlanStates {
-		parts[i] = string(s)
-	}
-	return strings.Join(parts, " | ")
-}
-
 const serverName = "tm"
 const serverVersion = "0.1.0"
 
@@ -54,15 +46,28 @@ func (s *Server) ServeStdio() error {
 func (s *Server) registerTools() {
 	s.mcp.AddTool(
 		mcp.NewTool("task_create",
-			mcp.WithDescription("Create a new task. Returns the assigned task ID."),
+			mcp.WithDescription(`Create a new task. Returns the assigned task ID.
+
+Hierarchy: pass `+"`parent_id`"+` to create a child task. Top-level tasks (parent_id="") are the roots. Use task_list with parent_id to enumerate children.
+
+Type / category: use `+"`labels`"+`. There is no separate type field — a task IS what its labels say it is. Common conventions:
+- "plan" — a task that represents a plan; typically has children under it
+- "bug"  — defect to fix
+- "task" — generic unit of work
+
+Labels are free-form strings, exact-match, no validation. Pick what your team uses and stay consistent.`),
 			mcp.WithString("subject", mcp.Description("Short title of the task."), mcp.Required()),
 			mcp.WithString("description", mcp.Description("Longer description of the task. Optional.")),
 			mcp.WithString("assigned_agent", mcp.Description("Name of the agent the task is assigned to. Optional.")),
 			mcp.WithArray("depends_on",
-				mcp.Description("IDs of existing tasks this task depends on. Optional."),
+				mcp.Description("IDs of existing tasks this task BLOCKS ON (different concept from parent_id: depends_on = \"can't start until these are done\"; parent_id = \"belongs under\"). Optional."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("ID of the plan this task belongs to. Optional.")),
+			mcp.WithString("parent_id", mcp.Description("ID of an existing task to use as the parent in the hierarchy. Optional. Empty (or omitted) = top-level task.")),
+			mcp.WithArray("labels",
+				mcp.Description(`Labels to tag the task with (e.g. ["plan"], ["bug"], ["task"]). Optional. Labels are the type/category signal — use "plan" for planning tasks, "bug" for defects, "task" for generic work. Filter with task_list label=<name>.`),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskCreate,
@@ -96,7 +101,11 @@ Typical handoffs:
 				mcp.Description("Replacement dependency list (existing task IDs). Pass [] to clear; omit to leave unchanged."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("New plan ID. Pass empty string to unassign from any plan. Omit to leave unchanged.")),
+			mcp.WithString("parent_id", mcp.Description("New parent task ID. Pass empty string to make this a top-level task. Omit to leave unchanged. Cannot reference the task itself.")),
+			mcp.WithArray("labels",
+				mcp.Description(`Replacement label list (REPLACES the current list, does not merge). Pass [] to clear; omit to leave unchanged. Use for type/category — e.g. ["plan"], ["bug"], ["task"]. See task_create for label conventions.`),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal events. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskEdit,
@@ -104,8 +113,15 @@ Typical handoffs:
 
 	s.mcp.AddTool(
 		mcp.NewTool("task_list",
-			mcp.WithDescription("List all tasks. Optionally filter by plan."),
-			mcp.WithString("plan_id", mcp.Description(`Filter tasks by plan ID. Pass an empty string to list only standalone tasks (no plan). Omit to list all tasks.`)),
+			mcp.WithDescription(`List tasks. Without filters returns every task. parent_id picks the base set; label further narrows it.
+
+Common patterns:
+- list every plan:        label="plan"
+- list top-level tasks:   parent_id=""
+- list children of a plan: parent_id="<plan-task-id>"
+- list bugs:              label="bug"`),
+			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Pass empty string for top-level tasks only. Omit to ignore.`)),
+			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). E.g. label="plan", label="bug", label="task". Omit to ignore.`)),
 		),
 		s.handleTaskList,
 	)
@@ -138,73 +154,11 @@ Typical handoffs:
 	)
 
 	s.mcp.AddTool(
-		mcp.NewTool("plan_create",
-			mcp.WithDescription("Create a new plan. Returns the assigned plan ID."),
-			mcp.WithString("subject", mcp.Description("Short title of the plan."), mcp.Required()),
-			mcp.WithString("description", mcp.Description("Longer description of the plan. Optional.")),
-			mcp.WithString("assigned_agent", mcp.Description("Name of the agent the plan is assigned to. Optional.")),
-			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
-		),
-		s.handlePlanCreate,
-	)
-
-	s.mcp.AddTool(
-		mcp.NewTool("plan_edit",
-			mcp.WithDescription(`Edit an existing plan. Only the fields provided are changed; omitted fields keep their current value.
-
-HANDOFF RULE (same as task_edit): when you want someone else to act on this plan next, change `+"`state`"+` AND `+"`assigned_agent`"+` in the same call. Plans appear in the assignee's inbox while in draft / active / on_hold, and drop out on completed / cancelled.`),
-			mcp.WithString("id", mcp.Description("Plan ID."), mcp.Required()),
-			mcp.WithString("subject", mcp.Description("New subject. Omit to leave unchanged.")),
-			mcp.WithString("description", mcp.Description("New description. Omit to leave unchanged.")),
-			mcp.WithString("state",
-				mcp.Description("New state. Omit to leave unchanged. Allowed: "+joinPlanStates()+". draft/active/on_hold keep the plan in the assignee's inbox; completed and cancelled remove it."),
-			),
-			mcp.WithString("assigned_agent", mcp.Description("New assigned agent. Omit to leave unchanged. Set together with `state` when handing off.")),
-			mcp.WithString("actor", mcp.Description("Identity to record on the journal events. Overrides the server-wide default for this call only.")),
-		),
-		s.handlePlanEdit,
-	)
-
-	s.mcp.AddTool(
-		mcp.NewTool("plan_list",
-			mcp.WithDescription("List all plans."),
-		),
-		s.handlePlanList,
-	)
-
-	s.mcp.AddTool(
-		mcp.NewTool("plan_get",
-			mcp.WithDescription("Get a single plan by ID."),
-			mcp.WithString("id", mcp.Description("Plan ID."), mcp.Required()),
-		),
-		s.handlePlanGet,
-	)
-
-	s.mcp.AddTool(
-		mcp.NewTool("plan_get_comments",
-			mcp.WithDescription("Get all comments attached to a plan."),
-			mcp.WithString("id", mcp.Description("Plan ID."), mcp.Required()),
-		),
-		s.handlePlanGetComments,
-	)
-
-	s.mcp.AddTool(
-		mcp.NewTool("plan_add_comment",
-			mcp.WithDescription("Append a comment to a plan."),
-			mcp.WithString("id", mcp.Description("Plan ID."), mcp.Required()),
-			mcp.WithString("who", mcp.Description("Author of the comment."), mcp.Required()),
-			mcp.WithString("comment", mcp.Description("Comment body. Markdown is supported."), mcp.Required()),
-			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
-		),
-		s.handlePlanAddComment,
-	)
-
-	s.mcp.AddTool(
 		mcp.NewTool("inbox",
 			mcp.WithDescription(`Return the actor's inbox. Use this as the heartbeat: call it each cycle to see what needs your attention.
 
 Response sections:
-- tasks / plans: items currently assigned to the actor in an open or active state (todo, in_progress, blocked, in_review for tasks; draft, active, on_hold for plans). These are your turn. Newest UpdatedAt first.
+- tasks: items currently assigned to the actor in an open or active state (draft, todo, in_progress, blocked, in_review). These are your turn. Newest UpdatedAt first. Plans (tasks labeled "plan") appear here too when assigned to you.
 - resumable: subset of `+"`tasks`"+` whose UpdatedAt is after your last-seen cursor — someone moved the ball back into your court since your last heartbeat (typical: a reply on a blocked task, a reassignment to you, an unblock). Act on these first.
 - recent_changes: journal events touching your assigned items (or reassignments TO you) since your last-seen cursor. Audit feed, oldest first. Events you authored yourself are excluded.
 - last_seen_at: the cursor value as it was BEFORE this call. After a non-peek call the cursor is advanced to now, so the next inbox call will only show what arrived after this moment.
@@ -212,7 +166,7 @@ Response sections:
 Handoff model: things appear here when someone changes a task's state AND reassigns it to you in the same edit (see task_edit). Things disappear when you do the same handoff in reverse, or when the task reaches a terminal state (done, cancelled).`),
 			mcp.WithString("actor", mcp.Description("Inbox owner. Defaults to the server-wide actor.")),
 			mcp.WithBoolean("peek", mcp.Description("If true, do not advance the last-seen cursor. Use when looking without committing to having processed the items — the next non-peek call will still surface them.")),
-			mcp.WithNumber("limit", mcp.Description("Max recent_changes to return (0 = no limit). Default 50. Does not affect tasks/plans/resumable.")),
+			mcp.WithNumber("limit", mcp.Description("Max recent_changes to return (0 = no limit). Default 50. Does not affect tasks/resumable.")),
 		),
 		s.handleInbox,
 	)
@@ -221,7 +175,6 @@ Handoff model: things appear here when someone changes a task's state AND reassi
 		mcp.NewTool("journal_list",
 			mcp.WithDescription("List audit-log events, newest first. All filters are optional and AND-combined."),
 			mcp.WithString("task_id", mcp.Description("Filter by task ID.")),
-			mcp.WithString("plan_id", mcp.Description("Filter by plan ID.")),
 			mcp.WithString("actor", mcp.Description("Filter by actor (agent / user name).")),
 			mcp.WithArray("kinds",
 				mcp.Description("Filter by event kinds (OR semantics)."),

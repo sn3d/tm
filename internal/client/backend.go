@@ -5,8 +5,6 @@ package client
 type Backend interface {
 	Tasks() TasksRepository
 	Comments() CommentsRepository
-	Plans() PlansRepository
-	PlanComments() PlanCommentsRepository
 	Events() EventsRepository
 	ActorCursors() ActorCursorRepository
 }

@@ -8,23 +8,19 @@ import (
 	"strings"
 )
 
-// nextSharedNumericID returns the next sequential numeric ID shared across
-// tasks and plans. It scans both dir/tasks/ and dir/plans/, extracts the
-// leading ID portion of each filename, and returns (max + 1) as a string.
-// Non-numeric IDs (e.g. legacy "PLAN-1" or JIRA-style "TASK-123") are ignored
-// when computing the max. Missing directories are treated as empty.
+// nextSharedNumericID returns the next sequential numeric ID for tasks. The
+// counter is named "shared" for historical reasons — before plans were
+// collapsed into tasks the counter scanned both tasks/ and plans/ so IDs
+// were unique across both. Post-collapse only tasks/ is scanned; former
+// plan IDs are preserved as task IDs by the collapse migration.
+// Non-numeric IDs (e.g. legacy "PLAN-1" or JIRA-style "TASK-123") are
+// ignored when computing the max. Missing directories are treated as empty.
 func nextSharedNumericID(dir string) (string, error) {
-	max := 0
-	for _, sub := range []string{"tasks", "plans"} {
-		m, err := maxNumericIDIn(filepath.Join(dir, sub))
-		if err != nil {
-			return "", err
-		}
-		if m > max {
-			max = m
-		}
+	m, err := maxNumericIDIn(filepath.Join(dir, "tasks"))
+	if err != nil {
+		return "", err
 	}
-	return strconv.Itoa(max + 1), nil
+	return strconv.Itoa(m + 1), nil
 }
 
 func maxNumericIDIn(dir string) (int, error) {

@@ -240,13 +240,13 @@ func TestTasksRepository_JiraStyleID_RoundTrips(t *testing.T) {
 	}
 }
 
-func TestTasksRepository_PlanID_RoundTrip(t *testing.T) {
+func TestTasksRepository_ParentID_RoundTrip(t *testing.T) {
 	b := newTempBackend(t)
-	plan := client.Plan{ID: "PLAN-1", Subject: "container", State: client.PlanStateDraft}
-	if err := b.Plans().Save(&plan); err != nil {
-		t.Fatalf("seed plan: %v", err)
+	parent := client.Task{ID: "parent-1", Subject: "container", State: client.TaskStateDraft, Mode: client.TaskModePlanning}
+	if err := b.Tasks().Save(&parent); err != nil {
+		t.Fatalf("seed parent: %v", err)
 	}
-	task := client.Task{ID: "task-1", Subject: "in plan", State: client.TaskStateTodo, PlanID: "PLAN-1"}
+	task := client.Task{ID: "task-1", Subject: "under parent", State: client.TaskStateTodo, ParentID: "parent-1"}
 	if err := b.Tasks().Save(&task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -258,23 +258,23 @@ func TestTasksRepository_PlanID_RoundTrip(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected task, got nil")
 	}
-	if got.PlanID != "PLAN-1" {
-		t.Errorf("expected PlanID=PLAN-1, got %q", got.PlanID)
+	if got.ParentID != "parent-1" {
+		t.Errorf("expected ParentID=parent-1, got %q", got.ParentID)
 	}
 }
 
-func TestTasksRepository_GetByPlan(t *testing.T) {
+func TestTasksRepository_GetByParent(t *testing.T) {
 	b := newTempBackend(t)
-	for _, id := range []string{"PLAN-1", "PLAN-2"} {
-		if err := b.Plans().Save(&client.Plan{ID: id, Subject: id, State: client.PlanStateDraft}); err != nil {
-			t.Fatalf("seed plan %q: %v", id, err)
+	for _, id := range []string{"parent-1", "parent-2"} {
+		if err := b.Tasks().Save(&client.Task{ID: id, Subject: id, State: client.TaskStateDraft, Mode: client.TaskModePlanning}); err != nil {
+			t.Fatalf("seed parent %q: %v", id, err)
 		}
 	}
 	seed := []client.Task{
-		{ID: "t-a", Subject: "a", State: client.TaskStateTodo, PlanID: "PLAN-1"},
-		{ID: "t-b", Subject: "b", State: client.TaskStateTodo, PlanID: "PLAN-1"},
-		{ID: "t-c", Subject: "c", State: client.TaskStateTodo, PlanID: "PLAN-2"},
-		{ID: "t-d", Subject: "d", State: client.TaskStateTodo}, // standalone
+		{ID: "t-a", Subject: "a", State: client.TaskStateTodo, ParentID: "parent-1"},
+		{ID: "t-b", Subject: "b", State: client.TaskStateTodo, ParentID: "parent-1"},
+		{ID: "t-c", Subject: "c", State: client.TaskStateTodo, ParentID: "parent-2"},
+		{ID: "t-d", Subject: "d", State: client.TaskStateTodo}, // top-level
 	}
 	for i := range seed {
 		if err := b.Tasks().Save(&seed[i]); err != nil {
@@ -282,31 +282,23 @@ func TestTasksRepository_GetByPlan(t *testing.T) {
 		}
 	}
 
-	got, err := b.Tasks().GetByPlan("PLAN-1")
+	got, err := b.Tasks().GetByParent("parent-1")
 	if err != nil {
-		t.Fatalf("GetByPlan: %v", err)
+		t.Fatalf("GetByParent: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("expected 2 tasks for PLAN-1, got %d", len(got))
+		t.Fatalf("expected 2 tasks for parent-1, got %d", len(got))
 	}
 	for _, task := range got {
-		if task.PlanID != "PLAN-1" {
-			t.Errorf("expected PlanID=PLAN-1, got %q for task %q", task.PlanID, task.ID)
+		if task.ParentID != "parent-1" {
+			t.Errorf("expected ParentID=parent-1, got %q for task %q", task.ParentID, task.ID)
 		}
-	}
-
-	standalone, err := b.Tasks().GetByPlan("")
-	if err != nil {
-		t.Fatalf("GetByPlan(empty): %v", err)
-	}
-	if len(standalone) != 1 || standalone[0].ID != "t-d" {
-		t.Errorf("expected standalone task t-d, got %+v", standalone)
 	}
 }
 
-// Legacy task files written before the plan_id field existed must still
-// parse cleanly. Standalone tasks must not emit the field when saved.
-func TestTasksRepository_ParsesLegacyFile_WithoutPlanID(t *testing.T) {
+// Legacy task files written before the parent_id field existed must still
+// parse cleanly.
+func TestTasksRepository_ParsesLegacyFile_WithoutParentID(t *testing.T) {
 	dir := tmpDir(t)
 	b, err := NewBackend(dir)
 	if err != nil {
@@ -335,15 +327,16 @@ some description
 	if got == nil {
 		t.Fatal("expected legacy task to load")
 	}
-	if got.PlanID != "" {
-		t.Errorf("expected empty PlanID for legacy task, got %q", got.PlanID)
+	if got.ParentID != "" {
+		t.Errorf("expected empty ParentID for legacy task, got %q", got.ParentID)
 	}
 	if got.Subject != "legacy task" || got.AssignedAgent != "alice" {
 		t.Errorf("legacy task did not parse correctly: %+v", got)
 	}
 }
 
-func TestTasksRepository_Save_StandaloneOmitsPlanIDFromFile(t *testing.T) {
+// Top-level tasks (no ParentID) must not emit a parent_id frontmatter field.
+func TestTasksRepository_Save_TopLevelOmitsParentIDFromFile(t *testing.T) {
 	dir := tmpDir(t)
 	b, err := NewBackend(dir)
 	if err != nil {
@@ -359,8 +352,8 @@ func TestTasksRepository_Save_StandaloneOmitsPlanIDFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read task file: %v", err)
 	}
-	if bytes.Contains(raw, []byte("plan_id")) {
-		t.Errorf("standalone task file should not emit plan_id, got:\n%s", string(raw))
+	if bytes.Contains(raw, []byte("parent_id")) {
+		t.Errorf("top-level task file should not emit parent_id, got:\n%s", string(raw))
 	}
 }
 

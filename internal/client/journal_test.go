@@ -17,7 +17,7 @@ func kinds(events []Event) []EventKind {
 func TestCreateTask_EmitsCreatedEvent(t *testing.T) {
 	b := newStubBackend()
 	c := New(b, WithActor("alice"))
-	id, err := c.CreateTask("subj", "desc", "agent-x", nil, "")
+	id, err := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc", AssignedAgent: "agent-x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestCreateTask_EmitsCreatedEvent(t *testing.T) {
 func TestCreateTask_PayloadOmitsEmptyDependsOn(t *testing.T) {
 	b := newStubBackend()
 	c := New(b)
-	if _, err := c.CreateTask("s", "", "", nil, ""); err != nil {
+	if _, err := c.CreateTask(CreateTaskInput{Subject: "s"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	if _, present := b.events.appended[0].Payload["depends_on"]; present {
@@ -59,11 +59,11 @@ func TestCreateTask_PayloadOmitsEmptyDependsOn(t *testing.T) {
 func TestEditTask_EmitsOnlyChangedFieldEvents(t *testing.T) {
 	b := newStubBackend()
 	c := New(b)
-	id, _ := c.CreateTask("subj", "", "alice", nil, "")
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", AssignedAgent: "alice"})
 	b.events.appended = nil // reset to focus on Edit events
 
 	// Change only state.
-	if err := c.EditTask(id, "subj", "", TaskStateInProgress, "alice", nil, ""); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "subj", State: TaskStateInProgress, AssignedAgent: "alice"}); err != nil {
 		t.Fatalf("EditTask: %v", err)
 	}
 	got := kinds(b.events.appended)
@@ -77,22 +77,22 @@ func TestEditTask_EmitsOnlyChangedFieldEvents(t *testing.T) {
 	}
 }
 
-func TestEditTask_EmitsAssignedAndPlanAndDeps(t *testing.T) {
+func TestEditTask_EmitsAssignedAndParentAndDeps(t *testing.T) {
 	b := newStubBackend()
-	b.seedPlan("PLAN-1")
-	b.seedPlan("PLAN-2")
+	b.seed("parent-1")
+	b.seed("parent-2")
 	b.seed("dep-a")
 	b.seed("dep-b")
 
 	c := New(b)
-	id, _ := c.CreateTask("subj", "", "alice", []TaskID{"dep-a"}, "PLAN-1")
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", AssignedAgent: "alice", DependsOn: []TaskID{"dep-a"}, ParentID: "parent-1"})
 	b.events.appended = nil
 
-	if err := c.EditTask(id, "subj", "", TaskStateTodo, "bob", []TaskID{"dep-b"}, "PLAN-2"); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "subj", State: TaskStateTodo, AssignedAgent: "bob", DependsOn: []TaskID{"dep-b"}, ParentID: "parent-2"}); err != nil {
 		t.Fatalf("EditTask: %v", err)
 	}
 	got := kinds(b.events.appended)
-	want := []EventKind{EventTaskAssigned, EventTaskDependsOnChanged, EventTaskPlanChanged}
+	want := []EventKind{EventTaskAssigned, EventTaskDependsOnChanged, EventTaskParentChanged}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("kinds: got %v, want %v", got, want)
 	}
@@ -101,10 +101,10 @@ func TestEditTask_EmitsAssignedAndPlanAndDeps(t *testing.T) {
 func TestEditTask_NoEventsWhenNothingChanged(t *testing.T) {
 	b := newStubBackend()
 	c := New(b)
-	id, _ := c.CreateTask("subj", "desc", "alice", nil, "")
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc", AssignedAgent: "alice"})
 	b.events.appended = nil
 
-	if err := c.EditTask(id, "subj", "desc", TaskStateTodo, "alice", nil, ""); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "subj", Description: "desc", State: TaskStateTodo, AssignedAgent: "alice"}); err != nil {
 		t.Fatalf("EditTask: %v", err)
 	}
 	if len(b.events.appended) != 0 {
@@ -115,10 +115,10 @@ func TestEditTask_NoEventsWhenNothingChanged(t *testing.T) {
 func TestEditTask_EditedEventCarriesOnlyDiffFields(t *testing.T) {
 	b := newStubBackend()
 	c := New(b)
-	id, _ := c.CreateTask("subj", "desc", "", nil, "")
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc"})
 	b.events.appended = nil
 
-	if err := c.EditTask(id, "new-subj", "desc", TaskStateTodo, "", nil, ""); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "new-subj", Description: "desc", State: TaskStateTodo}); err != nil {
 		t.Fatalf("EditTask: %v", err)
 	}
 	if len(b.events.appended) != 1 || b.events.appended[0].Kind != EventTaskEdited {
@@ -138,7 +138,7 @@ func TestEditTask_EditedEventCarriesOnlyDiffFields(t *testing.T) {
 func TestAddTaskComment_EmitsCommentEventWithoutBody(t *testing.T) {
 	b := newStubBackend()
 	c := New(b)
-	id, _ := c.CreateTask("s", "", "", nil, "")
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "s"})
 	b.events.appended = nil
 
 	if err := c.AddTaskComment(id, "alice", "sensitive body should not leak"); err != nil {
@@ -159,66 +159,17 @@ func TestAddTaskComment_EmitsCommentEventWithoutBody(t *testing.T) {
 	}
 }
 
-func TestCreatePlan_EmitsCreatedEvent(t *testing.T) {
-	b := newStubBackend()
-	c := New(b)
-	id, err := c.CreatePlan("subj", "", "alice")
-	if err != nil {
-		t.Fatalf("CreatePlan: %v", err)
-	}
-	if len(b.events.appended) != 1 {
-		t.Fatalf("want 1 event, got %d", len(b.events.appended))
-	}
-	e := b.events.appended[0]
-	if e.Kind != EventPlanCreated || e.PlanID != id {
-		t.Errorf("unexpected event: %+v", e)
-	}
-}
-
-func TestEditPlan_EmitsFieldEvents(t *testing.T) {
-	b := newStubBackend()
-	c := New(b)
-	id, _ := c.CreatePlan("subj", "desc", "alice")
-	b.events.appended = nil
-
-	if err := c.EditPlan(id, "new-subj", "desc", PlanStateActive, "bob"); err != nil {
-		t.Fatalf("EditPlan: %v", err)
-	}
-	got := kinds(b.events.appended)
-	want := []EventKind{EventPlanEdited, EventPlanStateChanged, EventPlanAssigned}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("kinds: got %v, want %v", got, want)
-	}
-}
-
-func TestAddPlanComment_EmitsCommentEventWithoutBody(t *testing.T) {
-	b := newStubBackend()
-	c := New(b)
-	id, _ := c.CreatePlan("s", "", "")
-	b.events.appended = nil
-
-	if err := c.AddPlanComment(id, "alice", "private body"); err != nil {
-		t.Fatalf("AddPlanComment: %v", err)
-	}
-	if len(b.events.appended) != 1 || b.events.appended[0].Kind != EventPlanCommented {
-		t.Fatalf("expected single plan.commented, got %+v", b.events.appended)
-	}
-	if _, present := b.events.appended[0].Payload["comment"]; present {
-		t.Error("payload must not contain comment body")
-	}
-}
-
 func TestListEvents_PassesThroughToBackend(t *testing.T) {
 	b := newStubBackend()
 	c := New(b, WithActor("alice"))
-	_, _ = c.CreateTask("s", "", "", nil, "")
-	_, _ = c.CreatePlan("p", "", "")
+	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
+	_, _ = c.CreateTask(CreateTaskInput{Subject: "t"})
 
 	got, err := c.ListEvents(EventFilter{Kinds: []EventKind{EventTaskCreated}})
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(got) != 1 || got[0].Kind != EventTaskCreated {
+	if len(got) != 2 || got[0].Kind != EventTaskCreated {
 		t.Errorf("filter not applied: %+v", got)
 	}
 }

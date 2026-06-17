@@ -17,7 +17,6 @@ var listCmd = &cli.Command{
 	Usage: "List journal events, oldest at top",
 	Flags: []cli.Flag{
 		&cli.StringFlag{Name: "task", Usage: "Filter by task ID"},
-		&cli.StringFlag{Name: "plan", Usage: "Filter by plan ID"},
 		&cli.StringFlag{Name: "actor", Usage: "Filter by actor (agent / user name)"},
 		&cli.StringSliceFlag{Name: "kind", Usage: "Filter by event kind (repeatable; OR semantics)"},
 		&cli.StringFlag{Name: "since", Usage: "Only events after this RFC3339 timestamp"},
@@ -32,7 +31,6 @@ var listCmd = &cli.Command{
 
 		filter := client.EventFilter{
 			TaskID: command.String("task"),
-			PlanID: command.String("plan"),
 			Actor:  command.String("actor"),
 			Limit:  int(command.Int("limit")),
 		}
@@ -78,19 +76,15 @@ var listCmd = &cli.Command{
 	},
 }
 
-// targetLabel produces the "task TASK-5" / "plan PLAN-1" column.
+// targetLabel produces the "task TASK-5" column.
 func targetLabel(e client.Event) string {
-	switch {
-	case e.TaskID != "":
+	if e.TaskID != "" {
 		return "task " + e.TaskID
-	case e.PlanID != "":
-		return "plan " + e.PlanID
-	default:
-		return "-"
 	}
+	return "-"
 }
 
-// verbFromKind strips the "task." / "plan." prefix so the column reads
+// verbFromKind strips the "task." prefix so the column reads
 // "state_changed" rather than "task.state_changed" — the target column
 // already shows which entity it is.
 func verbFromKind(k client.EventKind) string {
@@ -105,17 +99,16 @@ func verbFromKind(k client.EventKind) string {
 // unknown shapes fall through to a JSON-ish dump.
 func summary(e client.Event) string {
 	switch e.Kind {
-	case client.EventTaskStateChanged, client.EventPlanStateChanged,
-		client.EventTaskAssigned, client.EventPlanAssigned,
-		client.EventTaskPlanChanged:
+	case client.EventTaskStateChanged, client.EventTaskAssigned,
+		client.EventTaskParentChanged, client.EventTaskModeChanged:
 		return fmt.Sprintf("%s → %s", strOrDash(e.Payload["from"]), strOrDash(e.Payload["to"]))
-	case client.EventTaskDependsOnChanged:
+	case client.EventTaskDependsOnChanged, client.EventTaskLabelsChanged:
 		return fmt.Sprintf("%s → %s", listOrDash(e.Payload["from"]), listOrDash(e.Payload["to"]))
-	case client.EventTaskCreated, client.EventPlanCreated:
+	case client.EventTaskCreated:
 		return strOrDash(e.Payload["subject"])
-	case client.EventTaskCommented, client.EventPlanCommented:
+	case client.EventTaskCommented:
 		return fmt.Sprintf("by %s (%s)", strOrDash(e.Payload["who"]), strOrDash(e.Payload["comment_id"]))
-	case client.EventTaskEdited, client.EventPlanEdited:
+	case client.EventTaskEdited:
 		return editedFields(e.Payload)
 	default:
 		return ""

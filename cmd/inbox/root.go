@@ -49,8 +49,6 @@ var Cmd = &cli.Command{
 		limit := int(command.Int("limit"))
 		printTasks(box.Tasks)
 		fmt.Println()
-		printPlans(box.Plans)
-		fmt.Println()
 		printChanges(box.RecentChanges, box.LastSeenAt, limit)
 		return nil
 	},
@@ -64,34 +62,17 @@ func printTasks(tasks []client.Task) {
 		return
 	}
 	taskHeader := bold
-	printTaskRow(taskHeader("ID"), taskHeader("SUBJECT"), taskHeader("STATE"), taskHeader("PLAN"))
+	printTaskRow(taskHeader("ID"), taskHeader("SUBJECT"), taskHeader("STATE"), taskHeader("PARENT"))
 	for _, t := range tasks {
-		plan := tui.Dash(t.PlanID)
-		if t.PlanID != "" {
-			plan = tui.Truncate(t.PlanID, tui.ColPlanWidth-2)
+		parent := tui.Dash(t.ParentID)
+		if t.ParentID != "" {
+			parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
 		}
 		printTaskRow(
 			t.ID,
 			tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
 			tui.TaskStateBadge(t.State),
-			plan,
-		)
-	}
-}
-
-func printPlans(plans []client.Plan) {
-	bold := color.New(color.Bold).Sprint
-	fmt.Println(bold("Plans"))
-	if len(plans) == 0 {
-		fmt.Println(color.HiBlackString("  (none)"))
-		return
-	}
-	printPlanRow(bold("ID"), bold("SUBJECT"), bold("STATE"))
-	for _, p := range plans {
-		printPlanRow(
-			p.ID,
-			tui.Truncate(p.Subject, tui.ColSubjectWidth-2),
-			tui.PlanStateBadge(p.State),
+			parent,
 		)
 	}
 }
@@ -127,32 +108,20 @@ func formatSince(t time.Time) string {
 	return t.Local().Format("2006-01-02 15:04:05")
 }
 
-func printTaskRow(id, subject, state, plan string) {
+func printTaskRow(id, subject, state, parent string) {
 	fmt.Println(
 		tui.PadRight(id, tui.ColIDWidth) +
 			tui.PadRight(subject, tui.ColSubjectWidth) +
 			tui.PadRight(state, tui.ColStateWidth) +
-			plan,
-	)
-}
-
-func printPlanRow(id, subject, state string) {
-	fmt.Println(
-		tui.PadRight(id, tui.ColIDWidth) +
-			tui.PadRight(subject, tui.ColSubjectWidth) +
-			state,
+			parent,
 	)
 }
 
 func targetLabel(e client.Event) string {
-	switch {
-	case e.TaskID != "":
+	if e.TaskID != "" {
 		return "task " + e.TaskID
-	case e.PlanID != "":
-		return "plan " + e.PlanID
-	default:
-		return "-"
 	}
+	return "-"
 }
 
 func verbFromKind(k client.EventKind) string {
@@ -165,17 +134,16 @@ func verbFromKind(k client.EventKind) string {
 
 func summary(e client.Event) string {
 	switch e.Kind {
-	case client.EventTaskStateChanged, client.EventPlanStateChanged,
-		client.EventTaskAssigned, client.EventPlanAssigned,
-		client.EventTaskPlanChanged:
+	case client.EventTaskStateChanged, client.EventTaskAssigned,
+		client.EventTaskParentChanged, client.EventTaskModeChanged:
 		return fmt.Sprintf("%s → %s", strOrDash(e.Payload["from"]), strOrDash(e.Payload["to"]))
-	case client.EventTaskDependsOnChanged:
+	case client.EventTaskDependsOnChanged, client.EventTaskLabelsChanged:
 		return fmt.Sprintf("%s → %s", listOrDash(e.Payload["from"]), listOrDash(e.Payload["to"]))
-	case client.EventTaskCreated, client.EventPlanCreated:
+	case client.EventTaskCreated:
 		return strOrDash(e.Payload["subject"])
-	case client.EventTaskCommented, client.EventPlanCommented:
+	case client.EventTaskCommented:
 		return fmt.Sprintf("by %s (%s)", strOrDash(e.Payload["who"]), strOrDash(e.Payload["comment_id"]))
-	case client.EventTaskEdited, client.EventPlanEdited:
+	case client.EventTaskEdited:
 		return editedFields(e.Payload)
 	default:
 		return ""

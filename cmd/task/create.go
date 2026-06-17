@@ -13,7 +13,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var createCmd = &cli.Command{
+// CreateCmd is the top-level `tm create` command.
+var CreateCmd = &cli.Command{
 	Name:  "create",
 	Usage: "Create a new task",
 	Flags: []cli.Flag{
@@ -36,8 +37,16 @@ var createCmd = &cli.Command{
 			Usage: "Comma-separated list of task IDs this task depends on",
 		},
 		&cli.StringFlag{
-			Name:  "plan",
-			Usage: "Plan ID this task belongs to (optional)",
+			Name:  "parent",
+			Usage: "Parent task ID (optional). Omit for a top-level task.",
+		},
+		&cli.StringFlag{
+			Name:  "labels",
+			Usage: "Comma-separated labels (e.g. bug,chore,area:auth)",
+		},
+		&cli.StringFlag{
+			Name:  "mode",
+			Usage: "Render/filter hint: standard | planning (default standard)",
 		},
 		app.ActorFlag,
 	},
@@ -53,7 +62,12 @@ var createCmd = &cli.Command{
 		description := command.String("description")
 		assigned := command.String("assigned")
 		dependsOn := parseDependsOn(command.String("depends-on"))
-		plan := command.String("plan")
+		parent := command.String("parent")
+		labels := parseLabels(command.String("labels"))
+		mode, err := client.ParseTaskMode(command.String("mode"))
+		if err != nil {
+			return err
+		}
 
 		if subject == "" {
 			draft, err := editor.EditTaskDraft(editor.TaskDraft{
@@ -61,7 +75,9 @@ var createCmd = &cli.Command{
 				Description: description,
 				Assigned:    assigned,
 				DependsOn:   dependsOn,
-				Plan:        plan,
+				Parent:      parent,
+				Labels:      labels,
+				Mode:        string(mode),
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("--subject is required when not running in a terminal")
@@ -76,10 +92,23 @@ var createCmd = &cli.Command{
 			description = draft.Description
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
-			plan = draft.Plan
+			parent = draft.Parent
+			labels = draft.Labels
+			mode, err = client.ParseTaskMode(draft.Mode)
+			if err != nil {
+				return err
+			}
 		}
 
-		id, err := c.CreateTask(subject, description, assigned, dependsOn, plan)
+		id, err := c.CreateTask(client.CreateTaskInput{
+			Subject:       subject,
+			Description:   description,
+			AssignedAgent: assigned,
+			DependsOn:     dependsOn,
+			ParentID:      parent,
+			Labels:        labels,
+			Mode:          mode,
+		})
 		if err != nil {
 			return err
 		}
@@ -92,11 +121,22 @@ var createCmd = &cli.Command{
 // trimming whitespace and dropping empty entries. Returns nil for an empty
 // string so the resulting task has no dependency list at all.
 func parseDependsOn(raw string) []client.TaskID {
+	return parseCommaList(raw)
+}
+
+// parseLabels splits the --labels flag value into a slice, sharing the same
+// trim/split logic as --depends-on. Kept as a thin wrapper so call sites
+// remain self-documenting.
+func parseLabels(raw string) []string {
+	return parseCommaList(raw)
+}
+
+func parseCommaList(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
 	}
 	parts := strings.Split(raw, ",")
-	out := make([]client.TaskID, 0, len(parts))
+	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if id := strings.TrimSpace(p); id != "" {
 			out = append(out, id)

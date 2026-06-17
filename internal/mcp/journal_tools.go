@@ -17,7 +17,6 @@ type eventView struct {
 	Actor     string         `json:"actor"`
 	Kind      string         `json:"kind"`
 	TaskID    string         `json:"task_id,omitempty"`
-	PlanID    string         `json:"plan_id,omitempty"`
 	Payload   map[string]any `json:"payload,omitempty"`
 }
 
@@ -28,7 +27,6 @@ func viewEvent(e client.Event) eventView {
 		Actor:     e.Actor,
 		Kind:      string(e.Kind),
 		TaskID:    e.TaskID,
-		PlanID:    e.PlanID,
 		Payload:   e.Payload,
 	}
 }
@@ -39,9 +37,6 @@ func (s *Server) handleJournalList(_ context.Context, req mcp.CallToolRequest) (
 	filter := client.EventFilter{}
 	if v, ok := args["task_id"].(string); ok {
 		filter.TaskID = v
-	}
-	if v, ok := args["plan_id"].(string); ok {
-		filter.PlanID = v
 	}
 	if v, ok := args["actor"].(string); ok {
 		filter.Actor = v

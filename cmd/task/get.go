@@ -12,16 +12,11 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var getCmd = &cli.Command{
-	Name:  "get",
-	Usage: "Get a single task by ID",
-	Flags: []cli.Flag{
-		&cli.StringFlag{
-			Name:     "id",
-			Usage:    "Task ID",
-			Required: true,
-		},
-	},
+// GetCmd is the top-level `tm get <id>` command.
+var GetCmd = &cli.Command{
+	Name:      "get",
+	Usage:     "Get a single task by ID",
+	ArgsUsage: "<id>",
 	Action: func(ctx context.Context, command *cli.Command) error {
 		cfg := ctx.Value(client.CfgKey).(*client.Config)
 		c, err := app.NewClient(cfg)
@@ -29,7 +24,10 @@ var getCmd = &cli.Command{
 			return err
 		}
 
-		id := command.String("id")
+		id := command.Args().First()
+		if id == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm get 123`")
+		}
 		t, err := c.GetTask(id)
 		if err != nil {
 			return err
@@ -45,7 +43,7 @@ var getCmd = &cli.Command{
 		fmt.Printf("%s: %s\n", bold(t.ID), t.Subject)
 		fmt.Printf("   %s %s\n", dim("status:"), tui.TaskStateBadge(t.State))
 		fmt.Printf("   %s %s\n", dim("agent:"), tui.Dash(t.AssignedAgent))
-		fmt.Printf("   %s %s\n", dim("plan:"), tui.Dash(t.PlanID))
+		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(t.ParentID))
 		if len(t.DependsOn) > 0 {
 			fmt.Printf("   %s %s\n", dim("depends on:"), strings.Join(t.DependsOn, ", "))
 		}

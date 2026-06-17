@@ -29,7 +29,6 @@ type eventLine struct {
 	Actor     string         `json:"actor"`
 	Kind      string         `json:"kind"`
 	TaskID    string         `json:"task_id,omitempty"`
-	PlanID    string         `json:"plan_id,omitempty"`
 	Payload   map[string]any `json:"payload,omitempty"`
 }
 
@@ -46,7 +45,6 @@ func (er *eventsRepository) Append(e *client.Event) error {
 		Actor:     e.Actor,
 		Kind:      string(e.Kind),
 		TaskID:    e.TaskID,
-		PlanID:    e.PlanID,
 		Payload:   e.Payload,
 	}
 	raw, err := json.Marshal(line)
@@ -138,7 +136,6 @@ func parseEventLine(raw []byte) (client.Event, error) {
 		Actor:     line.Actor,
 		Kind:      client.EventKind(line.Kind),
 		TaskID:    line.TaskID,
-		PlanID:    line.PlanID,
 		Payload:   line.Payload,
 	}, nil
 }
@@ -148,9 +145,6 @@ func matches(e client.Event, f client.EventFilter) bool {
 		return false // skip blank-line zero value
 	}
 	if f.TaskID != "" && e.TaskID != f.TaskID {
-		return false
-	}
-	if f.PlanID != "" && e.PlanID != f.PlanID {
 		return false
 	}
 	if f.Actor != "" && e.Actor != f.Actor {

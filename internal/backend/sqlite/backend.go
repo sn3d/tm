@@ -16,12 +16,10 @@ import (
 const dbFilename = "tm.db"
 
 type backend struct {
-	tasks        *tasksRepository
-	comments     *commentsRepository
-	plans        *plansRepository
-	planComments *planCommentsRepository
-	events       *eventsRepository
-	cursors      *actorCursorsRepository
+	tasks    *tasksRepository
+	comments *commentsRepository
+	events   *eventsRepository
+	cursors  *actorCursorsRepository
 }
 
 // NewBackend opens (or creates) a SQLite database at dbPath, runs any
@@ -41,12 +39,10 @@ func NewBackend(dbPath string) (client.Backend, error) {
 		return nil, err
 	}
 	return &backend{
-		tasks:        &tasksRepository{db: db},
-		comments:     &commentsRepository{db: db},
-		plans:        &plansRepository{db: db},
-		planComments: &planCommentsRepository{db: db},
-		events:       &eventsRepository{db: db},
-		cursors:      &actorCursorsRepository{db: db},
+		tasks:    &tasksRepository{db: db},
+		comments: &commentsRepository{db: db},
+		events:   &eventsRepository{db: db},
+		cursors:  &actorCursorsRepository{db: db},
 	}, nil
 }
 
@@ -83,14 +79,6 @@ func (b *backend) Tasks() client.TasksRepository {
 
 func (b *backend) Comments() client.CommentsRepository {
 	return b.comments
-}
-
-func (b *backend) Plans() client.PlansRepository {
-	return b.plans
-}
-
-func (b *backend) PlanComments() client.PlanCommentsRepository {
-	return b.planComments
 }
 
 func (b *backend) Events() client.EventsRepository {

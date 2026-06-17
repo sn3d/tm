@@ -27,7 +27,9 @@ type frontmatter struct {
 	State         string   `yaml:"state"`
 	AssignedAgent string   `yaml:"assigned_agent"`
 	DependsOn     []string `yaml:"depends_on,omitempty"`
-	PlanID        string   `yaml:"plan_id,omitempty"`
+	ParentID      string   `yaml:"parent_id,omitempty"`
+	Labels        []string `yaml:"labels,omitempty"`
+	Mode          string   `yaml:"mode,omitempty"`
 	CreatedAt     string   `yaml:"created_at,omitempty"`
 	UpdatedAt     string   `yaml:"updated_at,omitempty"`
 }
