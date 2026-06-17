@@ -5,6 +5,7 @@ import (
 	"log"
 	"reflect"
 	"slices"
+	"time"
 )
 
 type Client struct {
@@ -293,9 +294,28 @@ func (c *Client) detectCycle(selfID TaskID, deps []TaskID) error {
 	return nil
 }
 
-// ListTasks returns all tasks.
-func (c *Client) ListTasks() ([]Task, error) {
-	return c.backend.Tasks().GetAll()
+// ListTasks returns tasks filtered by archived state. Pass
+// ArchivedFilterDefault (or ArchivedActive) to hide archived rows, ArchivedOnly
+// to show only archived rows, ArchivedAll to include both. The repository
+// always returns every row; filtering happens here so backends stay dumb.
+func (c *Client) ListTasks(filter ArchivedFilter) ([]Task, error) {
+	all, err := c.backend.Tasks().GetAll()
+	if err != nil {
+		return nil, err
+	}
+	return applyArchivedFilter(all, filter), nil
+}
+
+// applyArchivedFilter keeps rows that match the requested archive state. The
+// returned slice is a fresh allocation; the input is untouched.
+func applyArchivedFilter(in []Task, f ArchivedFilter) []Task {
+	out := make([]Task, 0, len(in))
+	for _, t := range in {
+		if f.keep(t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // GetTask returns the task with the given ID, or a NotFoundError if it doesn't exist.
@@ -348,10 +368,11 @@ func (c *Client) AddTaskComment(id TaskID, who string, comment string) error {
 }
 
 // GetTasksByLabel returns all tasks whose Labels slice contains the given
-// label. Empty label returns no results — callers wanting "all tasks" should
-// use ListTasks. Filtering is done client-side since labels are an in-memory
-// slice on each task; no backend index is maintained.
-func (c *Client) GetTasksByLabel(label string) ([]Task, error) {
+// label, narrowed by the archived filter. Empty label returns no results —
+// callers wanting "all tasks" should use ListTasks. Filtering is done
+// client-side since labels are an in-memory slice on each task; no backend
+// index is maintained.
+func (c *Client) GetTasksByLabel(label string, filter ArchivedFilter) ([]Task, error) {
 	if label == "" {
 		return nil, nil
 	}
@@ -361,18 +382,23 @@ func (c *Client) GetTasksByLabel(label string) ([]Task, error) {
 	}
 	out := make([]Task, 0, len(all))
 	for _, t := range all {
-		if slices.Contains(t.Labels, label) {
-			out = append(out, t)
+		if !slices.Contains(t.Labels, label) {
+			continue
 		}
+		if !filter.keep(t) {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out, nil
 }
 
-// GetTasksByParent returns all tasks whose ParentID matches the given id.
-// An empty id is treated as "top-level" and returns tasks with no parent;
-// no existence check is performed in that case. For a non-empty id the
-// parent task must exist, otherwise a NotFoundError is returned.
-func (c *Client) GetTasksByParent(id TaskID) ([]Task, error) {
+// GetTasksByParent returns all tasks whose ParentID matches the given id,
+// narrowed by the archived filter. An empty id is treated as "top-level" and
+// returns tasks with no parent; no existence check is performed in that case.
+// For a non-empty id the parent task must exist, otherwise a NotFoundError is
+// returned.
+func (c *Client) GetTasksByParent(id TaskID, filter ArchivedFilter) ([]Task, error) {
 	if id != "" {
 		p, err := c.backend.Tasks().GetByID(id)
 		if err != nil {
@@ -386,7 +412,106 @@ func (c *Client) GetTasksByParent(id TaskID) ([]Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load tasks for parent %q: %w", id, err)
 	}
-	return tasks, nil
+	return applyArchivedFilter(tasks, filter), nil
+}
+
+// ArchiveTask marks a task as soft-hidden. When cascade is true the entire
+// descendant tree (via ParentID) is archived in the same call; cascade=false
+// archives only the named task. Returns the number of descendants archived
+// (NOT counting the named task itself). No-ops (and emits no event) if the
+// task is already archived. The task's State is untouched — archive is a
+// visibility signal, not a workflow signal, and dependents of an archived
+// task remain blocked on it.
+func (c *Client) ArchiveTask(id TaskID, cascade bool) (int, error) {
+	t, err := c.backend.Tasks().GetByID(id)
+	if err != nil {
+		return 0, fmt.Errorf("load task %q: %w", id, err)
+	}
+	if t == nil {
+		return 0, &NotFoundError{Resource: "task", ID: id}
+	}
+	if t.ArchivedAt != nil {
+		return 0, nil
+	}
+
+	now := time.Now().UTC()
+	t.ArchivedAt = &now
+	if err := c.backend.Tasks().Save(t); err != nil {
+		return 0, fmt.Errorf("save task %q: %w", id, err)
+	}
+
+	cascaded := 0
+	if cascade {
+		descendants, err := c.collectDescendants(id)
+		if err != nil {
+			return 0, err
+		}
+		for i := range descendants {
+			if descendants[i].ArchivedAt != nil {
+				continue
+			}
+			descendants[i].ArchivedAt = &now
+			if err := c.backend.Tasks().Save(&descendants[i]); err != nil {
+				return 0, fmt.Errorf("save descendant task %q: %w", descendants[i].ID, err)
+			}
+			cascaded++
+		}
+	}
+
+	c.emit(&Event{Kind: EventTaskArchived, TaskID: id, Payload: map[string]any{
+		"archived_at":   now.Format(time.RFC3339Nano),
+		"cascade_count": cascaded,
+	}})
+	return cascaded, nil
+}
+
+// UnarchiveTask clears ArchivedAt on the named task only. Intentionally does
+// not cascade — reviving a tree requires explicit per-task action. No-op (and
+// no event) if the task is not archived.
+func (c *Client) UnarchiveTask(id TaskID) error {
+	t, err := c.backend.Tasks().GetByID(id)
+	if err != nil {
+		return fmt.Errorf("load task %q: %w", id, err)
+	}
+	if t == nil {
+		return &NotFoundError{Resource: "task", ID: id}
+	}
+	if t.ArchivedAt == nil {
+		return nil
+	}
+	t.ArchivedAt = nil
+	if err := c.backend.Tasks().Save(t); err != nil {
+		return fmt.Errorf("save task %q: %w", id, err)
+	}
+	c.emit(&Event{Kind: EventTaskUnarchived, TaskID: id, Payload: map[string]any{}})
+	return nil
+}
+
+// collectDescendants returns every task reachable downward from root via
+// ParentID (children, grandchildren, ...), BFS-ordered. The root itself is
+// NOT included. A visited set guards against any pathological cycle even
+// though the parent graph is supposed to be a forest.
+func (c *Client) collectDescendants(root TaskID) ([]Task, error) {
+	var out []Task
+	visited := map[TaskID]struct{}{root: {}}
+	queue := []TaskID{root}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		children, err := c.backend.Tasks().GetByParent(parent)
+		if err != nil {
+			return nil, fmt.Errorf("load children of %q: %w", parent, err)
+		}
+		for _, child := range children {
+			if _, seen := visited[child.ID]; seen {
+				continue
+			}
+			visited[child.ID] = struct{}{}
+			out = append(out, child)
+			queue = append(queue, child.ID)
+		}
+	}
+	return out, nil
 }
 
 // ListEvents returns journal entries matching the filter (newest first).

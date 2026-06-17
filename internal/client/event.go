@@ -16,6 +16,8 @@ const (
 	EventTaskParentChanged    EventKind = "task.parent_changed"
 	EventTaskLabelsChanged    EventKind = "task.labels_changed"
 	EventTaskModeChanged      EventKind = "task.mode_changed"
+	EventTaskArchived         EventKind = "task.archived"
+	EventTaskUnarchived       EventKind = "task.unarchived"
 	EventTaskCommented        EventKind = "task.commented"
 )
 

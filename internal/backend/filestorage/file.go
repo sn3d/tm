@@ -32,6 +32,9 @@ type frontmatter struct {
 	Mode          string   `yaml:"mode,omitempty"`
 	CreatedAt     string   `yaml:"created_at,omitempty"`
 	UpdatedAt     string   `yaml:"updated_at,omitempty"`
+	// ArchivedAt is RFC3339Nano when the task is archived, omitted otherwise.
+	// Files written before this field existed read back as "" → nil ArchivedAt.
+	ArchivedAt string `yaml:"archived_at,omitempty"`
 }
 
 const (

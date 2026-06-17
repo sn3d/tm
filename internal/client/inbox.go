@@ -102,6 +102,12 @@ func (c *Client) assignedTasks(actor string) ([]Task, error) {
 		if t.AssignedAgent != actor {
 			continue
 		}
+		// Archive is a stronger signal than state — even an in_progress
+		// task is hidden from the inbox once archived. If the agent needs
+		// to act on it, they unarchive first.
+		if t.ArchivedAt != nil {
+			continue
+		}
 		switch t.State.Category() {
 		case CategoryOpen, CategoryActive:
 			out = append(out, t)

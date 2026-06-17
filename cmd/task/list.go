@@ -23,6 +23,14 @@ var ListCmd = &cli.Command{
 			Name:  "parent",
 			Usage: `Filter tasks by parent ID. Pass --parent "" to list only top-level tasks.`,
 		},
+		&cli.BoolFlag{
+			Name:  "archived",
+			Usage: "Show only archived tasks (default hides them).",
+		},
+		&cli.BoolFlag{
+			Name:  "all",
+			Usage: "Show every task including archived ones.",
+		},
 	},
 	Action: func(ctx context.Context, command *cli.Command) error {
 		cfg := ctx.Value(client.CfgKey).(*client.Config)
@@ -31,16 +39,27 @@ var ListCmd = &cli.Command{
 			return err
 		}
 
+		if command.Bool("archived") && command.Bool("all") {
+			return fmt.Errorf("--archived and --all are mutually exclusive")
+		}
+		archived := client.ArchivedActive
+		switch {
+		case command.Bool("archived"):
+			archived = client.ArchivedOnly
+		case command.Bool("all"):
+			archived = client.ArchivedAll
+		}
+
 		label := command.Args().First()
 
 		var tasks []client.Task
 		switch {
 		case label != "":
-			tasks, err = c.GetTasksByLabel(label)
+			tasks, err = c.GetTasksByLabel(label, archived)
 		case command.IsSet("parent"):
-			tasks, err = c.GetTasksByParent(command.String("parent"))
+			tasks, err = c.GetTasksByParent(command.String("parent"), archived)
 		default:
-			tasks, err = c.ListTasks()
+			tasks, err = c.ListTasks(archived)
 		}
 		if err != nil {
 			return err
@@ -55,7 +74,7 @@ var ListCmd = &cli.Command{
 		})
 
 		header := color.New(color.Bold).Sprint
-		printRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("LABELS"), header("PARENT"))
+		fmt.Println(formatRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("LABELS"), header("PARENT")))
 		for _, t := range tasks {
 			agent := tui.Dash(t.AssignedAgent)
 			if t.AssignedAgent != "" {
@@ -69,7 +88,7 @@ var ListCmd = &cli.Command{
 			if t.ParentID != "" {
 				parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
 			}
-			printRow(
+			row := formatRow(
 				t.ID,
 				tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
 				tui.TaskStateBadge(t.State),
@@ -77,20 +96,27 @@ var ListCmd = &cli.Command{
 				labels,
 				parent,
 			)
+			// Archived rows render dimmed end-to-end so the user can tell at a
+			// glance which rows are hidden by default. The state emoji's own
+			// colour escape gets overridden by the wrap — that's intentional;
+			// the dim treatment is the signal.
+			if t.ArchivedAt != nil {
+				row = color.HiBlackString(row)
+			}
+			fmt.Println(row)
 		}
 		return nil
 	},
 }
 
-// printRow writes one aligned row to stdout using the fixed column widths.
-// The last column is not padded since there's nothing after it.
-func printRow(id, subject, state, agent, labels, parent string) {
-	fmt.Println(
-		tui.PadRight(id, tui.ColIDWidth) +
-			tui.PadRight(subject, tui.ColSubjectWidth) +
-			tui.PadRight(state, tui.ColStateWidth) +
-			tui.PadRight(agent, tui.ColAgentWidth) +
-			tui.PadRight(labels, tui.ColLabelsWidth) +
-			parent,
-	)
+// formatRow assembles one aligned row using the fixed column widths. The last
+// column is not padded since there's nothing after it. Returned as a string
+// (not printed) so the caller can wrap archived rows in a dim colour helper.
+func formatRow(id, subject, state, agent, labels, parent string) string {
+	return tui.PadRight(id, tui.ColIDWidth) +
+		tui.PadRight(subject, tui.ColSubjectWidth) +
+		tui.PadRight(state, tui.ColStateWidth) +
+		tui.PadRight(agent, tui.ColAgentWidth) +
+		tui.PadRight(labels, tui.ColLabelsWidth) +
+		parent
 }

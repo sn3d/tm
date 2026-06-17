@@ -65,9 +65,16 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 		return fmt.Errorf("marshal labels for task %q: %w", t.ID, err)
 	}
 
+	// archived_at is NULL when not archived; non-NULL is RFC3339Nano. Use
+	// sql.NullString so the driver writes a real SQL NULL rather than ''.
+	var archivedAt sql.NullString
+	if t.ArchivedAt != nil {
+		archivedAt = sql.NullString{String: t.ArchivedAt.Format(time.RFC3339Nano), Valid: true}
+	}
+
 	const upsertTask = `
-		INSERT INTO tasks (id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject        = excluded.subject,
 			description    = excluded.description,
@@ -76,9 +83,10 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 			parent_id      = excluded.parent_id,
 			labels         = excluded.labels,
 			mode           = excluded.mode,
-			updated_at     = excluded.updated_at`
+			updated_at     = excluded.updated_at,
+			archived_at    = excluded.archived_at`
 	if _, err := tx.Exec(upsertTask, t.ID, t.Subject, t.Description, string(t.State), t.AssignedAgent, t.ParentID, labelsJSON, string(t.Mode),
-		t.CreatedAt.Format(time.RFC3339Nano), t.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+		t.CreatedAt.Format(time.RFC3339Nano), t.UpdatedAt.Format(time.RFC3339Nano), archivedAt); err != nil {
 		return fmt.Errorf("upsert task %q: %w", t.ID, err)
 	}
 
@@ -126,23 +134,24 @@ func loadTaskCreatedAt(tx *sql.Tx, id client.TaskID) (*time.Time, error) {
 
 // GetByID returns the task with the given ID, or (nil, nil) when no such row exists.
 func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at FROM tasks WHERE id = ?`
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at, archived_at FROM tasks WHERE id = ?`
 	var (
-		t          client.Task
-		state      string
-		labelsStr  string
-		modeStr    string
-		createdStr string
-		updatedStr string
+		t           client.Task
+		state       string
+		labelsStr   string
+		modeStr     string
+		createdStr  string
+		updatedStr  string
+		archivedRaw sql.NullString
 	)
-	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr)
+	err := tr.db.QueryRow(q, id).Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr, &archivedRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query task %q: %w", id, err)
 	}
-	if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr); err != nil {
+	if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr, archivedRaw); err != nil {
 		return nil, err
 	}
 	deps, err := tr.loadDeps(t.ID)
@@ -156,7 +165,7 @@ func (tr *tasksRepository) GetByID(id client.TaskID) (*client.Task, error) {
 // GetAll returns every task in the repository, ordered by UpdatedAt
 // descending (most recently changed first). ID breaks ties.
 func (tr *tasksRepository) GetAll() ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at, archived_at
 		FROM tasks ORDER BY updated_at DESC, id`
 	return tr.queryTasks(q)
 }
@@ -164,7 +173,7 @@ func (tr *tasksRepository) GetAll() ([]client.Task, error) {
 // GetByParent returns every task whose ParentID matches the given id, ordered
 // by UpdatedAt descending. Pass "" to list top-level tasks.
 func (tr *tasksRepository) GetByParent(parentID client.TaskID) ([]client.Task, error) {
-	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at
+	const q = `SELECT id, subject, description, state, assigned_agent, parent_id, labels, mode, created_at, updated_at, archived_at
 		FROM tasks WHERE parent_id = ? ORDER BY updated_at DESC, id`
 	return tr.queryTasks(q, parentID)
 }
@@ -179,17 +188,18 @@ func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, err
 	tasks := make([]client.Task, 0)
 	for rows.Next() {
 		var (
-			t          client.Task
-			state      string
-			labelsStr  string
-			modeStr    string
-			createdStr string
-			updatedStr string
+			t           client.Task
+			state       string
+			labelsStr   string
+			modeStr     string
+			createdStr  string
+			updatedStr  string
+			archivedRaw sql.NullString
 		)
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &state, &t.AssignedAgent, &t.ParentID, &labelsStr, &modeStr, &createdStr, &updatedStr, &archivedRaw); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
-		if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr); err != nil {
+		if err := hydrateTaskScalars(&t, state, labelsStr, modeStr, createdStr, updatedStr, archivedRaw); err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, t)
@@ -209,8 +219,9 @@ func (tr *tasksRepository) queryTasks(q string, args ...any) ([]client.Task, err
 
 // hydrateTaskScalars fills the parsed non-dependency scalars on t from their
 // raw TEXT-column representations. Empty `labels` and `mode` (from rows
-// inserted before this migration) decode to nil and TaskModeDefault.
-func hydrateTaskScalars(t *client.Task, state, labelsStr, modeStr, createdStr, updatedStr string) error {
+// inserted before earlier migrations) decode to nil and TaskModeDefault. An
+// invalid archived_at sql.NullString decodes to a nil ArchivedAt.
+func hydrateTaskScalars(t *client.Task, state, labelsStr, modeStr, createdStr, updatedStr string, archivedRaw sql.NullString) error {
 	parsedState, err := client.ParseTaskState(state)
 	if err != nil {
 		return fmt.Errorf("task %q: %w", t.ID, err)
@@ -231,6 +242,13 @@ func hydrateTaskScalars(t *client.Task, state, labelsStr, modeStr, createdStr, u
 	}
 	if t.UpdatedAt, err = parseSQLTime(updatedStr); err != nil {
 		return fmt.Errorf("parse updated_at for task %q: %w", t.ID, err)
+	}
+	if archivedRaw.Valid && archivedRaw.String != "" {
+		parsed, err := parseSQLTime(archivedRaw.String)
+		if err != nil {
+			return fmt.Errorf("parse archived_at for task %q: %w", t.ID, err)
+		}
+		t.ArchivedAt = &parsed
 	}
 	return nil
 }

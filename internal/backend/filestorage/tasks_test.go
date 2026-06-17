@@ -545,3 +545,109 @@ assigned_agent: alice
 		t.Errorf("expected zero timestamps for legacy task, got CreatedAt=%v UpdatedAt=%v", got.CreatedAt, got.UpdatedAt)
 	}
 }
+
+func TestTasksRepository_ArchivedAt_NilOmittedFromFile(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	repo := b.Tasks()
+
+	task := client.Task{Subject: "active"}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("ArchivedAt: got %v, want nil", got.ArchivedAt)
+	}
+	// File must not gain an archived_at: line when the task is not archived.
+	matches, _ := filepath.Glob(filepath.Join(dir, "tasks", task.ID+"*.md"))
+	if len(matches) == 0 {
+		t.Fatalf("no task file written for id %q", task.ID)
+	}
+	raw, _ := os.ReadFile(matches[0])
+	if bytes.Contains(raw, []byte("archived_at")) {
+		t.Errorf("expected archived_at key absent from on-disk file, got:\n%s", raw)
+	}
+}
+
+func TestTasksRepository_ArchivedAt_SetRoundTrips(t *testing.T) {
+	repo := newTempRepo(t)
+	when := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
+	task := client.Task{Subject: "archived", ArchivedAt: &when}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt == nil {
+		t.Fatal("ArchivedAt: got nil, want non-nil")
+	}
+	if !got.ArchivedAt.Equal(when) {
+		t.Errorf("ArchivedAt: got %v, want %v", got.ArchivedAt, when)
+	}
+}
+
+func TestTasksRepository_ArchivedAt_ClearReverts(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	repo := b.Tasks()
+	when := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
+	task := client.Task{Subject: "first archived then revived", ArchivedAt: &when}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save archived: %v", err)
+	}
+	task.ArchivedAt = nil
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save cleared: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("ArchivedAt should be nil after clear, got %v", got.ArchivedAt)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "tasks", task.ID+"*.md"))
+	raw, _ := os.ReadFile(matches[0])
+	if bytes.Contains(raw, []byte("archived_at")) {
+		t.Errorf("expected archived_at key absent after clear, got:\n%s", raw)
+	}
+}
+
+func TestTasksRepository_ParsesLegacyFile_WithoutArchivedAt(t *testing.T) {
+	dir := tmpDir(t)
+	b, err := NewBackend(dir)
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	legacyPath := filepath.Join(dir, "tasks", "legacy-arch.md")
+	legacyContent := `---
+id: legacy-arch
+state: todo
+assigned_agent: alice
+---
+
+# legacy task
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+	got, err := b.Tasks().GetByID("legacy-arch")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("legacy file with no archived_at key should yield nil ArchivedAt, got %v", got.ArchivedAt)
+	}
+}
