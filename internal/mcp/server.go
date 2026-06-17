@@ -113,17 +113,45 @@ Typical handoffs:
 
 	s.mcp.AddTool(
 		mcp.NewTool("task_list",
-			mcp.WithDescription(`List tasks. Without filters returns every task. parent_id picks the base set; label further narrows it.
+			mcp.WithDescription(`List tasks. Without filters returns every active task. parent_id picks the base set; label and archived narrow it.
 
 Common patterns:
-- list every plan:        label="plan"
-- list top-level tasks:   parent_id=""
-- list children of a plan: parent_id="<plan-task-id>"
-- list bugs:              label="bug"`),
+- list every active plan:    label="plan"
+- list top-level tasks:      parent_id=""
+- list children of a plan:   parent_id="<plan-task-id>"
+- list bugs:                 label="bug"
+- list archived tasks:       archived="archived"
+- list everything (audit):   archived="all"`),
 			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Pass empty string for top-level tasks only. Omit to ignore.`)),
 			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). E.g. label="plan", label="bug", label="task". Omit to ignore.`)),
+			mcp.WithString("archived", mcp.Description(`Filter by archive state. "active" (default) hides archived tasks; "archived" shows only archived; "all" includes both.`)),
 		),
 		s.handleTaskList,
+	)
+
+	s.mcp.AddTool(
+		mcp.NewTool("task_archive",
+			mcp.WithDescription(`Archive a task (soft-hide; reversible via task_unarchive).
+
+By default cascades: every descendant reachable via parent_id is archived in the same call. Pass cascade=false to archive only the named task.
+
+Archive is a visibility signal independent of state — an archived task keeps its state (todo/in_progress/...) and remains a valid depends_on target. Dependents stay blocked on it. Use task_unarchive to bring it back.`),
+			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
+			mcp.WithBoolean("cascade", mcp.Description("If true (default) archive all descendants too. Pass false to archive only the named task.")),
+			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+		),
+		s.handleTaskArchive,
+	)
+
+	s.mcp.AddTool(
+		mcp.NewTool("task_unarchive",
+			mcp.WithDescription(`Restore an archived task to the active view.
+
+Intentionally does NOT cascade. Descendants stay archived; call task_unarchive on each one you want back. This prevents accidentally un-hiding a whole tree.`),
+			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
+			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+		),
+		s.handleTaskUnarchive,
 	)
 
 	s.mcp.AddTool(

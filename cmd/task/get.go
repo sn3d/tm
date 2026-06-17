@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/sn3d/tm/internal/app"
@@ -42,6 +43,10 @@ var GetCmd = &cli.Command{
 
 		fmt.Printf("%s: %s\n", bold(t.ID), t.Subject)
 		fmt.Printf("   %s %s\n", dim("status:"), tui.TaskStateBadge(t.State))
+		if t.ArchivedAt != nil {
+			fmt.Printf("   %s %s\n", dim("archived:"),
+				color.YellowString("since %s", t.ArchivedAt.Format(time.RFC3339Nano)))
+		}
 		fmt.Printf("   %s %s\n", dim("agent:"), tui.Dash(t.AssignedAgent))
 		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(t.ParentID))
 		if len(t.DependsOn) > 0 {

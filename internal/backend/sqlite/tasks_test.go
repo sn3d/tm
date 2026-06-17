@@ -327,7 +327,7 @@ func TestNewBackend_FreshDBAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 4
+	const want = 5
 	if version != want {
 		t.Errorf("expected goose version %d, got %d", want, version)
 	}
@@ -372,7 +372,7 @@ func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 4
+	const want = 5
 	if version != want {
 		t.Errorf("expected goose version %d after legacy reconciliation + later migrations, got %d", want, version)
 	}
@@ -410,8 +410,12 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 		}
 		// Re-create the plans / plan_comments tables and the plan_id columns
 		// on tasks and events — those are dropped by 00004 so a fresh-on-v4
-		// DB doesn't have them, but a pre-v4 DB must.
+		// DB doesn't have them, but a pre-v4 DB must. Also drop archived_at
+		// (added by 00005, which we're rolling past) so the schema looks
+		// genuinely like v3.
 		const reshape = `
+			DROP INDEX IF EXISTS idx_tasks_archived_at;
+			ALTER TABLE tasks DROP COLUMN archived_at;
 			CREATE TABLE plans (
 				id             TEXT PRIMARY KEY,
 				subject        TEXT NOT NULL DEFAULT '',
@@ -673,5 +677,60 @@ func TestTasksRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
 	}
 	if !got.CreatedAt.Equal(want) {
 		t.Errorf("CreatedAt did not round-trip: got %v, want %v", got.CreatedAt, want)
+	}
+}
+
+func TestTasksRepository_ArchivedAt_NilRoundTrips(t *testing.T) {
+	repo := newTempRepo(t)
+	task := client.Task{Subject: "active"}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("ArchivedAt: got %v, want nil for never-archived row", got.ArchivedAt)
+	}
+}
+
+func TestTasksRepository_ArchivedAt_SetRoundTrips(t *testing.T) {
+	repo := newTempRepo(t)
+	want := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
+	task := client.Task{Subject: "archived", ArchivedAt: &want}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt == nil {
+		t.Fatal("ArchivedAt: got nil, want non-nil")
+	}
+	if !got.ArchivedAt.Equal(want) {
+		t.Errorf("ArchivedAt: got %v, want %v", got.ArchivedAt, want)
+	}
+}
+
+func TestTasksRepository_ArchivedAt_ClearReverts(t *testing.T) {
+	repo := newTempRepo(t)
+	when := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
+	task := client.Task{Subject: "first archive then unarchive", ArchivedAt: &when}
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save archived: %v", err)
+	}
+	// Now unarchive: same row, ArchivedAt cleared.
+	task.ArchivedAt = nil
+	if err := repo.Save(&task); err != nil {
+		t.Fatalf("Save unarchived: %v", err)
+	}
+	got, err := repo.GetByID(task.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("ArchivedAt should be nil after clear, got %v", got.ArchivedAt)
 	}
 }

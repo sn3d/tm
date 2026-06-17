@@ -54,6 +54,29 @@ func TestInbox_TasksFilteredByAssigneeAndCategory(t *testing.T) {
 	}
 }
 
+func TestInbox_ExcludesArchivedTasksRegardlessOfState(t *testing.T) {
+	b := newStubBackend()
+	when := time.Unix(2000, 0).UTC()
+	b.tasks.store["T-active"] = &Task{
+		ID: "T-active", AssignedAgent: "alice", State: TaskStateInProgress,
+	}
+	b.tasks.store["T-archived"] = &Task{
+		ID: "T-archived", AssignedAgent: "alice", State: TaskStateInProgress, ArchivedAt: &when,
+	}
+	box, err := New(b).Inbox("alice")
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	for _, tsk := range box.Tasks {
+		if tsk.ID == "T-archived" {
+			t.Errorf("archived task should be excluded from inbox")
+		}
+	}
+	if len(box.Tasks) != 1 || box.Tasks[0].ID != "T-active" {
+		t.Errorf("expected only T-active, got %v", box.Tasks)
+	}
+}
+
 func TestInbox_TasksSortedNewestFirstByUpdatedAt(t *testing.T) {
 	b := newStubBackend()
 	base := time.Unix(1000, 0).UTC()

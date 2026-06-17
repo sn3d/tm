@@ -70,6 +70,9 @@ func (tr *tasksRepository) Save(t *client.Task) error {
 		subject:     t.Subject,
 		description: t.Description,
 	}
+	if t.ArchivedAt != nil {
+		tf.frontmatter.ArchivedAt = t.ArchivedAt.Format(time.RFC3339Nano)
+	}
 	if existing != nil {
 		tf.comments = existing.comments
 	}
@@ -160,6 +163,14 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse updated_at for task %q: %w", tf.frontmatter.ID, err)
 	}
+	var archivedAt *time.Time
+	if tf.frontmatter.ArchivedAt != "" {
+		parsed, err := parseTime(tf.frontmatter.ArchivedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse archived_at for task %q: %w", tf.frontmatter.ID, err)
+		}
+		archivedAt = &parsed
+	}
 	return &client.Task{
 		ID:            tf.frontmatter.ID,
 		Subject:       tf.subject,
@@ -172,6 +183,7 @@ func taskFileToTask(tf *taskFile) (*client.Task, error) {
 		Mode:          mode,
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
+		ArchivedAt:    archivedAt,
 	}, nil
 }
 

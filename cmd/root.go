@@ -37,6 +37,8 @@ var Root = &cli.Command{
 		task.GetCmd,
 		task.EditCmd,
 		task.CommentCmd,
+		task.ArchiveCmd,
+		task.UnarchiveCmd,
 		journal.Cmd,
 		inbox.Cmd,
 		mcpCmd,

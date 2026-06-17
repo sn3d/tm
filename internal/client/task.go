@@ -19,6 +19,12 @@ type Task struct {
 	Mode          TaskMode
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// ArchivedAt marks a task as soft-hidden when non-nil. Archive is a
+	// visibility signal independent of State: a `todo` task can be archived
+	// (parked) and a `done` task can stay un-archived (recently shipped).
+	// Dependents of an archived task remain blocked on it — archive does not
+	// change workflow, only what appears in the default lists and inbox.
+	ArchivedAt *time.Time
 }
 
 // TaskMode is a render/filter hint on a task. It does not change workflow,
@@ -173,4 +179,42 @@ func ParseTaskState(s string) (TaskState, error) {
 		return "", fmt.Errorf("invalid task state: %q", s)
 	}
 	return ts, nil
+}
+
+// ArchivedFilter narrows list queries by archive state.
+type ArchivedFilter string
+
+const (
+	ArchivedActive ArchivedFilter = "active"   // exclude archived (default)
+	ArchivedOnly   ArchivedFilter = "archived" // only archived
+	ArchivedAll    ArchivedFilter = "all"      // include both
+)
+
+// ArchivedFilterDefault is what callers pass when they have no opinion.
+const ArchivedFilterDefault = ArchivedActive
+
+// ParseArchivedFilter parses the user-facing string form. The empty string
+// maps to the default so "no flag set" reads as "active only".
+func ParseArchivedFilter(s string) (ArchivedFilter, error) {
+	if s == "" {
+		return ArchivedFilterDefault, nil
+	}
+	f := ArchivedFilter(s)
+	switch f {
+	case ArchivedActive, ArchivedOnly, ArchivedAll:
+		return f, nil
+	}
+	return "", fmt.Errorf("invalid archived filter: %q (want active|archived|all)", s)
+}
+
+// keep applies an ArchivedFilter predicate to a single task.
+func (f ArchivedFilter) keep(t Task) bool {
+	switch f {
+	case ArchivedOnly:
+		return t.ArchivedAt != nil
+	case ArchivedAll:
+		return true
+	default:
+		return t.ArchivedAt == nil
+	}
 }

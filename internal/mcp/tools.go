@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sn3d/tm/internal/client"
@@ -22,20 +23,22 @@ func (s *Server) clientFor(args map[string]any) *client.Client {
 
 // taskView is the JSON shape returned for tasks. State is encoded as its
 // string form for agent-friendliness. The internal Mode field is not
-// exposed — agents use `labels` for type/category.
+// exposed — agents use `labels` for type/category. ArchivedAt is omitted
+// when nil so active tasks don't gain a noisy field.
 type taskView struct {
-	ID            string   `json:"id"`
-	Subject       string   `json:"subject"`
-	Description   string   `json:"description,omitempty"`
-	State         string   `json:"state"`
-	AssignedAgent string   `json:"assigned_agent,omitempty"`
+	ID            string  `json:"id"`
+	Subject       string  `json:"subject"`
+	Description   string  `json:"description,omitempty"`
+	State         string  `json:"state"`
+	AssignedAgent string  `json:"assigned_agent,omitempty"`
 	DependsOn     []string `json:"depends_on,omitempty"`
 	ParentID      string   `json:"parent_id,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
+	ArchivedAt    *string  `json:"archived_at,omitempty"`
 }
 
 func viewTask(t client.Task) taskView {
-	return taskView{
+	v := taskView{
 		ID:            t.ID,
 		Subject:       t.Subject,
 		Description:   t.Description,
@@ -45,6 +48,11 @@ func viewTask(t client.Task) taskView {
 		ParentID:      t.ParentID,
 		Labels:        t.Labels,
 	}
+	if t.ArchivedAt != nil {
+		s := t.ArchivedAt.Format(time.RFC3339Nano)
+		v.ArchivedAt = &s
+	}
+	return v
 }
 
 // dependsOnFromArgs reads the optional "depends_on" MCP argument, which can
@@ -274,18 +282,23 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 	)
 	parentID, hasParent := args["parent_id"].(string)
 	label, _ := args["label"].(string)
+	archivedStr, _ := args["archived"].(string)
+	archived, err := client.ParseArchivedFilter(archivedStr)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("invalid archived", err), nil
+	}
 
 	// parent_id picks the base set; label narrows it. label alone hits
 	// the dedicated client lookup; combined with parent_id we list under
 	// the parent and then filter in-process.
 	switch {
 	case hasParent:
-		tasks, err = s.c.GetTasksByParent(parentID)
+		tasks, err = s.c.GetTasksByParent(parentID, archived)
 	case label != "":
-		tasks, err = s.c.GetTasksByLabel(label)
+		tasks, err = s.c.GetTasksByLabel(label, archived)
 		label = "" // already applied by the dedicated lookup
 	default:
-		tasks, err = s.c.ListTasks()
+		tasks, err = s.c.ListTasks(archived)
 	}
 	if err != nil {
 		var nfe *client.NotFoundError
@@ -316,6 +329,49 @@ func filterByLabel(tasks []client.Task, label string) []client.Task {
 		}
 	}
 	return out
+}
+
+func (s *Server) handleTaskArchive(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return mcp.NewToolResultError("missing required argument: id"), nil
+	}
+	// cascade defaults to true when the field is absent or explicitly omitted.
+	cascade := true
+	if v, present := args["cascade"]; present {
+		if b, ok := v.(bool); ok {
+			cascade = b
+		}
+	}
+	count, err := s.clientFor(args).ArchiveTask(id, cascade)
+	if err != nil {
+		var nfe *client.NotFoundError
+		if errors.As(err, &nfe) {
+			return mcp.NewToolResultError(nfe.Error()), nil
+		}
+		return mcp.NewToolResultErrorFromErr(fmt.Sprintf("archive task %q", id), err), nil
+	}
+	return mcp.NewToolResultJSON(map[string]any{
+		"id":            id,
+		"cascade_count": count,
+	})
+}
+
+func (s *Server) handleTaskUnarchive(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return mcp.NewToolResultError("missing required argument: id"), nil
+	}
+	if err := s.clientFor(args).UnarchiveTask(id); err != nil {
+		var nfe *client.NotFoundError
+		if errors.As(err, &nfe) {
+			return mcp.NewToolResultError(nfe.Error()), nil
+		}
+		return mcp.NewToolResultErrorFromErr(fmt.Sprintf("unarchive task %q", id), err), nil
+	}
+	return mcp.NewToolResultText("ok"), nil
 }
 
 func (s *Server) handleTaskGet(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
