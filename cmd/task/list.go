@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/sn3d/tm/internal/app"
@@ -73,6 +72,7 @@ var ListCmd = &cli.Command{
 			return tasks[i].CreatedAt.Before(tasks[j].CreatedAt)
 		})
 
+		resolver := tui.NewResolver(cfg.Styling)
 		header := color.New(color.Bold).Sprint
 		fmt.Println(formatRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("LABELS"), header("PARENT")))
 		for _, t := range tasks {
@@ -82,7 +82,7 @@ var ListCmd = &cli.Command{
 			}
 			labels := tui.Dash("")
 			if len(t.Labels) > 0 {
-				labels = tui.Truncate(strings.Join(t.Labels, ","), tui.ColLabelsWidth-2)
+				labels = tui.Truncate(resolver.LabelsBadge(t.Labels), tui.ColLabelsWidth-2)
 			}
 			parent := tui.Dash(t.ParentID)
 			if t.ParentID != "" {
@@ -91,7 +91,7 @@ var ListCmd = &cli.Command{
 			row := formatRow(
 				t.ID,
 				tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
-				tui.TaskStateBadge(t.State),
+				resolver.StateBadge(t.State),
 				agent,
 				labels,
 				parent,

@@ -40,15 +40,19 @@ var GetCmd = &cli.Command{
 
 		bold := color.New(color.Bold).Sprint
 		dim := color.HiBlackString
+		resolver := tui.NewResolver(cfg.Styling)
 
 		fmt.Printf("%s: %s\n", bold(t.ID), t.Subject)
-		fmt.Printf("   %s %s\n", dim("status:"), tui.TaskStateBadge(t.State))
+		fmt.Printf("   %s %s\n", dim("status:"), resolver.StateBadge(t.State))
 		if t.ArchivedAt != nil {
 			fmt.Printf("   %s %s\n", dim("archived:"),
 				color.YellowString("since %s", t.ArchivedAt.Format(time.RFC3339Nano)))
 		}
 		fmt.Printf("   %s %s\n", dim("agent:"), tui.Dash(t.AssignedAgent))
 		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(t.ParentID))
+		if len(t.Labels) > 0 {
+			fmt.Printf("   %s %s\n", dim("labels:"), resolver.LabelsBadge(t.Labels))
+		}
 		if len(t.DependsOn) > 0 {
 			fmt.Printf("   %s %s\n", dim("depends on:"), strings.Join(t.DependsOn, ", "))
 		}
