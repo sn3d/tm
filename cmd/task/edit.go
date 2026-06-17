@@ -12,15 +12,12 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var editCmd = &cli.Command{
-	Name:  "edit",
-	Usage: "Edit an existing task",
+// EditCmd is the top-level `tm edit <id>` command.
+var EditCmd = &cli.Command{
+	Name:      "edit",
+	Usage:     "Edit an existing task",
+	ArgsUsage: "<id>",
 	Flags: []cli.Flag{
-		&cli.StringFlag{
-			Name:     "id",
-			Usage:    "Task ID",
-			Required: true,
-		},
 		&cli.StringFlag{
 			Name:    "subject",
 			Usage:   "Subject to edit",
@@ -44,10 +41,6 @@ var editCmd = &cli.Command{
 			Usage: "Comma-separated list of task IDs this task depends on (replaces existing list; pass \"\" to clear)",
 		},
 		&cli.StringFlag{
-			Name:  "plan",
-			Usage: `Plan ID this task belongs to. Pass --plan "" to clear. DEPRECATED — use --parent.`,
-		},
-		&cli.StringFlag{
 			Name:  "parent",
 			Usage: `Parent task ID. Pass --parent "" to make top-level.`,
 		},
@@ -69,7 +62,10 @@ var editCmd = &cli.Command{
 			return err
 		}
 
-		id := command.String("id")
+		id := command.Args().First()
+		if id == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm edit 123`")
+		}
 		t, err := c.GetTask(id)
 		if err != nil {
 			return err
@@ -89,7 +85,6 @@ var editCmd = &cli.Command{
 			!command.IsSet("state") &&
 			!command.IsSet("assigned") &&
 			!command.IsSet("depends-on") &&
-			!command.IsSet("plan") &&
 			!command.IsSet("parent") &&
 			!command.IsSet("labels") &&
 			!command.IsSet("mode")
@@ -103,6 +98,8 @@ var editCmd = &cli.Command{
 				State:       state.String(),
 				DependsOn:   dependsOn,
 				Parent:      parentID,
+				Labels:      labels,
+				Mode:        string(mode),
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("specify at least one field flag when not running in a terminal")
@@ -118,11 +115,16 @@ var editCmd = &cli.Command{
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
 			parentID = draft.Parent
+			labels = draft.Labels
 			if draft.State != "" {
 				state, err = client.ParseTaskState(draft.State)
 				if err != nil {
 					return err
 				}
+			}
+			mode, err = client.ParseTaskMode(draft.Mode)
+			if err != nil {
+				return err
 			}
 		} else {
 			// this section is executed as regular command
@@ -143,10 +145,6 @@ var editCmd = &cli.Command{
 			}
 			if command.IsSet("depends-on") {
 				dependsOn = parseDependsOn(command.String("depends-on"))
-			}
-			// --plan is the legacy alias for --parent; both target ParentID.
-			if command.IsSet("plan") {
-				parentID = command.String("plan")
 			}
 			if command.IsSet("parent") {
 				parentID = command.String("parent")

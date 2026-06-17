@@ -32,7 +32,11 @@ var Root = &cli.Command{
 	},
 	Commands: []*cli.Command{
 		initCmd,
-		task.Cmd,
+		task.CreateCmd,
+		task.ListCmd,
+		task.GetCmd,
+		task.EditCmd,
+		task.CommentCmd,
 		journal.Cmd,
 		inbox.Cmd,
 		mcpCmd,

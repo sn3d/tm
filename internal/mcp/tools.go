@@ -21,7 +21,8 @@ func (s *Server) clientFor(args map[string]any) *client.Client {
 }
 
 // taskView is the JSON shape returned for tasks. State is encoded as its
-// string form for agent-friendliness.
+// string form for agent-friendliness. The internal Mode field is not
+// exposed — agents use `labels` for type/category.
 type taskView struct {
 	ID            string   `json:"id"`
 	Subject       string   `json:"subject"`
@@ -31,11 +32,10 @@ type taskView struct {
 	DependsOn     []string `json:"depends_on,omitempty"`
 	ParentID      string   `json:"parent_id,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
-	Mode          string   `json:"mode,omitempty"`
 }
 
 func viewTask(t client.Task) taskView {
-	v := taskView{
+	return taskView{
 		ID:            t.ID,
 		Subject:       t.Subject,
 		Description:   t.Description,
@@ -45,10 +45,6 @@ func viewTask(t client.Task) taskView {
 		ParentID:      t.ParentID,
 		Labels:        t.Labels,
 	}
-	if t.Mode != client.TaskModeDefault {
-		v.Mode = t.Mode.String()
-	}
-	return v
 }
 
 // dependsOnFromArgs reads the optional "depends_on" MCP argument, which can
@@ -189,20 +185,9 @@ func (s *Server) handleTaskCreate(_ context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultErrorFromErr("invalid depends_on", err), nil
 	}
 	parentID, _ := args["parent_id"].(string)
-	// Accept legacy plan_id as a synonym for parent_id during the transition.
-	// Plans were collapsed into planning-mode tasks, so the field a caller
-	// would have set as plan_id now maps to the task's parent_id.
-	if parentID == "" {
-		parentID, _ = args["plan_id"].(string)
-	}
 	labels, _, err := labelsFromArgs(args)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("invalid labels", err), nil
-	}
-	modeStr, _ := args["mode"].(string)
-	mode, err := client.ParseTaskMode(modeStr)
-	if err != nil {
-		return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
 	}
 
 	id, err := s.clientFor(args).CreateTask(client.CreateTaskInput{
@@ -212,7 +197,6 @@ func (s *Server) handleTaskCreate(_ context.Context, req mcp.CallToolRequest) (*
 		DependsOn:     dependsOn,
 		ParentID:      parentID,
 		Labels:        labels,
-		Mode:          mode,
 	})
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("create task", err), nil
@@ -267,11 +251,6 @@ func (s *Server) handleTaskEdit(_ context.Context, req mcp.CallToolRequest) (*mc
 	} else if present {
 		in.DependsOn = newDeps
 	}
-	// plan_id is accepted as a legacy synonym for parent_id; both map to the
-	// same field on the unified task entity. parent_id wins if both are set.
-	if v, ok := args["plan_id"].(string); ok {
-		in.ParentID = v
-	}
 	if v, ok := args["parent_id"].(string); ok {
 		in.ParentID = v
 	}
@@ -279,13 +258,6 @@ func (s *Server) handleTaskEdit(_ context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultErrorFromErr("invalid labels", err), nil
 	} else if present {
 		in.Labels = newLabels
-	}
-	if v, ok := args["mode"].(string); ok && v != "" {
-		parsed, err := client.ParseTaskMode(v)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
-		}
-		in.Mode = parsed
 	}
 
 	if err := s.clientFor(args).EditTask(id, in); err != nil {
@@ -300,17 +272,18 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		tasks []client.Task
 		err   error
 	)
-	// plan_id is accepted as a legacy alias for parent_id.
-	planID, hasPlan := args["plan_id"].(string)
 	parentID, hasParent := args["parent_id"].(string)
-	noParent, _ := args["no_parent"].(bool)
+	label, _ := args["label"].(string)
+
+	// parent_id picks the base set; label narrows it. label alone hits
+	// the dedicated client lookup; combined with parent_id we list under
+	// the parent and then filter in-process.
 	switch {
 	case hasParent:
 		tasks, err = s.c.GetTasksByParent(parentID)
-	case hasPlan:
-		tasks, err = s.c.GetTasksByParent(planID)
-	case noParent:
-		tasks, err = s.c.GetTasksByParent("")
+	case label != "":
+		tasks, err = s.c.GetTasksByLabel(label)
+		label = "" // already applied by the dedicated lookup
 	default:
 		tasks, err = s.c.ListTasks()
 	}
@@ -321,15 +294,7 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		}
 		return mcp.NewToolResultErrorFromErr("list tasks", err), nil
 	}
-
-	if modeStr, ok := args["mode"].(string); ok && modeStr != "" {
-		mode, err := client.ParseTaskMode(modeStr)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid mode", err), nil
-		}
-		tasks = filterByMode(tasks, mode)
-	}
-	if label, ok := args["label"].(string); ok && label != "" {
+	if label != "" {
 		tasks = filterByLabel(tasks, label)
 	}
 
@@ -338,20 +303,6 @@ func (s *Server) handleTaskList(_ context.Context, req mcp.CallToolRequest) (*mc
 		views[i] = viewTask(t)
 	}
 	return mcp.NewToolResultJSON(map[string]any{"tasks": views})
-}
-
-func filterByMode(tasks []client.Task, mode client.TaskMode) []client.Task {
-	out := make([]client.Task, 0, len(tasks))
-	for _, t := range tasks {
-		taskMode := t.Mode
-		if taskMode == "" {
-			taskMode = client.TaskModeDefault
-		}
-		if taskMode == mode {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 func filterByLabel(tasks []client.Task, label string) []client.Task {

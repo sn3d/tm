@@ -152,12 +152,13 @@ func TestParseTemplate(t *testing.T) {
 
 func TestRenderTemplateRoundTrip(t *testing.T) {
 	tests := []struct {
-		name  string
-		draft TaskDraft
+		name       string
+		draft      TaskDraft
+		wantAssign string // override; empty means use draft.Assigned
 	}{
 		{name: "all fields", draft: TaskDraft{Subject: "ship", Description: "do the thing", Assigned: "alice"}},
 		{name: "no description uses placeholder", draft: TaskDraft{Subject: "ship", Assigned: "alice"}},
-		{name: "empty assigned", draft: TaskDraft{Subject: "ship", Description: "body"}},
+		{name: "empty assigned defaults to me", draft: TaskDraft{Subject: "ship", Description: "body"}, wantAssign: "me"},
 		{name: "with state", draft: TaskDraft{Subject: "ship", Description: "body", Assigned: "alice", State: "in_progress"}},
 		{name: "with deps", draft: TaskDraft{Subject: "ship", Description: "body", Assigned: "alice", DependsOn: []string{"ABC-1", "ABC-2"}}},
 	}
@@ -170,14 +171,18 @@ func TestRenderTemplateRoundTrip(t *testing.T) {
 				t.Fatalf("parse after render failed: %v\nrendered:\n%s", err, rendered)
 			}
 			wantDesc := tt.draft.Description // placeholder is collapsed back to empty
+			wantAssign := tt.wantAssign
+			if wantAssign == "" {
+				wantAssign = tt.draft.Assigned
+			}
 			if got.Subject != tt.draft.Subject {
 				t.Errorf("Subject: got %q, want %q", got.Subject, tt.draft.Subject)
 			}
 			if got.Description != wantDesc {
 				t.Errorf("Description: got %q, want %q", got.Description, wantDesc)
 			}
-			if got.Assigned != tt.draft.Assigned {
-				t.Errorf("Assigned: got %q, want %q", got.Assigned, tt.draft.Assigned)
+			if got.Assigned != wantAssign {
+				t.Errorf("Assigned: got %q, want %q", got.Assigned, wantAssign)
 			}
 			if got.State != tt.draft.State {
 				t.Errorf("State: got %q, want %q", got.State, tt.draft.State)

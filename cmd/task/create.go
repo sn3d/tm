@@ -13,7 +13,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var createCmd = &cli.Command{
+// CreateCmd is the top-level `tm create` command.
+var CreateCmd = &cli.Command{
 	Name:  "create",
 	Usage: "Create a new task",
 	Flags: []cli.Flag{
@@ -34,10 +35,6 @@ var createCmd = &cli.Command{
 		&cli.StringFlag{
 			Name:  "depends-on",
 			Usage: "Comma-separated list of task IDs this task depends on",
-		},
-		&cli.StringFlag{
-			Name:  "plan",
-			Usage: "Plan ID this task belongs to (optional, DEPRECATED — use --parent)",
 		},
 		&cli.StringFlag{
 			Name:  "parent",
@@ -65,12 +62,7 @@ var createCmd = &cli.Command{
 		description := command.String("description")
 		assigned := command.String("assigned")
 		dependsOn := parseDependsOn(command.String("depends-on"))
-		// --plan is the legacy alias for --parent. Resolve up-front so the
-		// editor template and CreateTaskInput see a single value.
 		parent := command.String("parent")
-		if parent == "" {
-			parent = command.String("plan")
-		}
 		labels := parseLabels(command.String("labels"))
 		mode, err := client.ParseTaskMode(command.String("mode"))
 		if err != nil {
@@ -84,6 +76,8 @@ var createCmd = &cli.Command{
 				Assigned:    assigned,
 				DependsOn:   dependsOn,
 				Parent:      parent,
+				Labels:      labels,
+				Mode:        string(mode),
 			})
 			if errors.Is(err, editor.ErrNotTerminal) {
 				return fmt.Errorf("--subject is required when not running in a terminal")
@@ -99,6 +93,11 @@ var createCmd = &cli.Command{
 			assigned = draft.Assigned
 			dependsOn = draft.DependsOn
 			parent = draft.Parent
+			labels = draft.Labels
+			mode, err = client.ParseTaskMode(draft.Mode)
+			if err != nil {
+				return err
+			}
 		}
 
 		id, err := c.CreateTask(client.CreateTaskInput{

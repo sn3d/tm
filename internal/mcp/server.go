@@ -16,14 +16,6 @@ func joinTaskStates() string {
 	return strings.Join(parts, " | ")
 }
 
-func joinTaskModes() string {
-	parts := make([]string, len(client.TaskModes))
-	for i, m := range client.TaskModes {
-		parts[i] = string(m)
-	}
-	return strings.Join(parts, " | ")
-}
-
 const serverName = "tm"
 const serverVersion = "0.1.0"
 
@@ -56,7 +48,14 @@ func (s *Server) registerTools() {
 		mcp.NewTool("task_create",
 			mcp.WithDescription(`Create a new task. Returns the assigned task ID.
 
-Hierarchy: pass `+"`parent_id`"+` to create a child task. Top-level tasks (parent_id="") are the roots; a task with `+"`mode=planning`"+` typically serves as a plan with children under it. Use task_list with parent_id to enumerate children.`),
+Hierarchy: pass `+"`parent_id`"+` to create a child task. Top-level tasks (parent_id="") are the roots. Use task_list with parent_id to enumerate children.
+
+Type / category: use `+"`labels`"+`. There is no separate type field — a task IS what its labels say it is. Common conventions:
+- "plan" — a task that represents a plan; typically has children under it
+- "bug"  — defect to fix
+- "task" — generic unit of work
+
+Labels are free-form strings, exact-match, no validation. Pick what your team uses and stay consistent.`),
 			mcp.WithString("subject", mcp.Description("Short title of the task."), mcp.Required()),
 			mcp.WithString("description", mcp.Description("Longer description of the task. Optional.")),
 			mcp.WithString("assigned_agent", mcp.Description("Name of the agent the task is assigned to. Optional.")),
@@ -64,13 +63,11 @@ Hierarchy: pass `+"`parent_id`"+` to create a child task. Top-level tasks (paren
 				mcp.Description("IDs of existing tasks this task BLOCKS ON (different concept from parent_id: depends_on = \"can't start until these are done\"; parent_id = \"belongs under\"). Optional."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("DEPRECATED: use parent_id. Kept until the plan entity is fully removed.")),
 			mcp.WithString("parent_id", mcp.Description("ID of an existing task to use as the parent in the hierarchy. Optional. Empty (or omitted) = top-level task.")),
 			mcp.WithArray("labels",
-				mcp.Description("Labels to tag the task with (e.g. \"bug\", \"chore\", \"area:auth\"). Optional. Use for informal categorization; filter with task_list label=<name>."),
+				mcp.Description(`Labels to tag the task with (e.g. ["plan"], ["bug"], ["task"]). Optional. Labels are the type/category signal — use "plan" for planning tasks, "bug" for defects, "task" for generic work. Filter with task_list label=<name>.`),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("mode", mcp.Description("Render/filter hint: "+joinTaskModes()+". Default standard. Set to `planning` for tasks that represent a plan (typically with children under them). No workflow difference between modes.")),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskCreate,
@@ -104,13 +101,11 @@ Typical handoffs:
 				mcp.Description("Replacement dependency list (existing task IDs). Pass [] to clear; omit to leave unchanged."),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("plan_id", mcp.Description("DEPRECATED: use parent_id. Pass empty string to unassign from any plan. Omit to leave unchanged.")),
 			mcp.WithString("parent_id", mcp.Description("New parent task ID. Pass empty string to make this a top-level task. Omit to leave unchanged. Cannot reference the task itself.")),
 			mcp.WithArray("labels",
-				mcp.Description("Replacement label list. Pass [] to clear; omit to leave unchanged."),
+				mcp.Description(`Replacement label list (REPLACES the current list, does not merge). Pass [] to clear; omit to leave unchanged. Use for type/category — e.g. ["plan"], ["bug"], ["task"]. See task_create for label conventions.`),
 				mcp.Items(map[string]any{"type": "string"}),
 			),
-			mcp.WithString("mode", mcp.Description("New mode: "+joinTaskModes()+". Omit to leave unchanged. Affects rendering/filtering only; no workflow impact.")),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal events. Overrides the server-wide default for this call only.")),
 		),
 		s.handleTaskEdit,
@@ -118,12 +113,15 @@ Typical handoffs:
 
 	s.mcp.AddTool(
 		mcp.NewTool("task_list",
-			mcp.WithDescription(`List tasks. Without filters returns every task. Filters are evaluated in this order: parent_id / plan_id / no_parent pick the base set; mode and label further narrow that set.`),
-			mcp.WithString("plan_id", mcp.Description(`DEPRECATED: use parent_id. Filter tasks by plan ID. Pass an empty string to list only standalone tasks (no plan). Omit to ignore.`)),
-			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Omit to ignore. Use no_parent=true for top-level tasks.`)),
-			mcp.WithBoolean("no_parent", mcp.Description(`If true, list only top-level tasks (parent_id=""). Combine with mode=planning to list plans.`)),
-			mcp.WithString("mode", mcp.Description(`Filter by mode: `+joinTaskModes()+`. Omit to ignore.`)),
-			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). Omit to ignore.`)),
+			mcp.WithDescription(`List tasks. Without filters returns every task. parent_id picks the base set; label further narrows it.
+
+Common patterns:
+- list every plan:        label="plan"
+- list top-level tasks:   parent_id=""
+- list children of a plan: parent_id="<plan-task-id>"
+- list bugs:              label="bug"`),
+			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Pass empty string for top-level tasks only. Omit to ignore.`)),
+			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). E.g. label="plan", label="bug", label="task". Omit to ignore.`)),
 		),
 		s.handleTaskList,
 	)
@@ -160,7 +158,7 @@ Typical handoffs:
 			mcp.WithDescription(`Return the actor's inbox. Use this as the heartbeat: call it each cycle to see what needs your attention.
 
 Response sections:
-- tasks: items currently assigned to the actor in an open or active state (draft, todo, in_progress, blocked, in_review). These are your turn. Newest UpdatedAt first. Planning-mode tasks (mode=planning, formerly "plans") appear here too when assigned to you.
+- tasks: items currently assigned to the actor in an open or active state (draft, todo, in_progress, blocked, in_review). These are your turn. Newest UpdatedAt first. Plans (tasks labeled "plan") appear here too when assigned to you.
 - resumable: subset of `+"`tasks`"+` whose UpdatedAt is after your last-seen cursor — someone moved the ball back into your court since your last heartbeat (typical: a reply on a blocked task, a reassignment to you, an unblock). Act on these first.
 - recent_changes: journal events touching your assigned items (or reassignments TO you) since your last-seen cursor. Audit feed, oldest first. Events you authored yourself are excluded.
 - last_seen_at: the cursor value as it was BEFORE this call. After a non-peek call the cursor is advanced to now, so the next inbox call will only show what arrived after this moment.

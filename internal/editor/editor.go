@@ -1,6 +1,6 @@
 // Package editor opens the user's $EDITOR with a YAML-frontmatter task
 // template and parses the saved file back into task fields. Used by
-// `tm task create` when --subject is omitted, mirroring `git commit`'s
+// `tm create` when --subject is omitted, mirroring `git commit`'s
 // editor-driven message UX.
 package editor
 
@@ -36,6 +36,8 @@ type TaskDraft struct {
 	State       string
 	DependsOn   []string
 	Parent      string
+	Labels      []string
+	Mode        string
 }
 
 type frontmatter struct {
@@ -43,6 +45,8 @@ type frontmatter struct {
 	Assigned  string   `yaml:"assigned"`
 	Parent    string   `yaml:"parent,omitempty"`
 	State     string   `yaml:"state,omitempty"`
+	Mode      string   `yaml:"mode,omitempty"`
+	Labels    []string `yaml:"labels,omitempty"`
 	DependsOn []string `yaml:"depends_on,omitempty"`
 }
 
@@ -94,21 +98,38 @@ func renderTemplate(d TaskDraft) string {
 	if description == "" {
 		description = descriptionPlaceholder
 	}
+	assigned := d.Assigned
+	if assigned == "" {
+		assigned = "me"
+	}
+	mode := d.Mode
+	if mode == "" {
+		mode = "standard"
+	}
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "subject: %s\n", d.Subject)
-	fmt.Fprintf(&b, "assigned: %s\n", d.Assigned)
-	fmt.Fprintf(&b, "parent: %q\n", d.Parent)
+	fmt.Fprintf(&b, "assigned: %s\n", assigned)
+	fmt.Fprintf(&b, "parent: %q  # parent task ID; empty = top-level task\n", d.Parent)
 	if d.State != "" {
-		fmt.Fprintf(&b, "state: %s\n", d.State)
+		fmt.Fprintf(&b, "state: %s  # draft | todo | in_progress | blocked | in_review | done | cancelled\n", d.State)
+	}
+	fmt.Fprintf(&b, "mode: %s  # standard | planning\n", mode)
+	if len(d.Labels) > 0 {
+		b.WriteString("labels:  # free-form tags, e.g. bug, chore, area:auth\n")
+		for _, l := range d.Labels {
+			fmt.Fprintf(&b, "  - %s\n", l)
+		}
+	} else {
+		b.WriteString("labels: []  # free-form tags, e.g. [bug, chore, area:auth]\n")
 	}
 	if len(d.DependsOn) > 0 {
-		b.WriteString("depends_on:\n")
+		b.WriteString("depends_on:  # task IDs this task waits on\n")
 		for _, dep := range d.DependsOn {
 			fmt.Fprintf(&b, "  - %s\n", dep)
 		}
 	} else {
-		b.WriteString("depends_on: []\n")
+		b.WriteString("depends_on: []  # task IDs this task waits on, e.g. [ABC-1, ABC-2]\n")
 	}
 	b.WriteString("---\n")
 	b.WriteString(description)
@@ -171,15 +192,8 @@ func parseTemplate(content []byte) (TaskDraft, error) {
 	if description == descriptionPlaceholder {
 		description = ""
 	}
-	deps := make([]string, 0, len(fm.DependsOn))
-	for _, d := range fm.DependsOn {
-		if trimmed := strings.TrimSpace(d); trimmed != "" {
-			deps = append(deps, trimmed)
-		}
-	}
-	if len(deps) == 0 {
-		deps = nil
-	}
+	deps := trimList(fm.DependsOn)
+	labels := trimList(fm.Labels)
 	return TaskDraft{
 		Subject:     strings.TrimSpace(fm.Subject),
 		Description: description,
@@ -187,5 +201,20 @@ func parseTemplate(content []byte) (TaskDraft, error) {
 		State:       strings.TrimSpace(fm.State),
 		DependsOn:   deps,
 		Parent:      strings.TrimSpace(fm.Parent),
+		Labels:      labels,
+		Mode:        strings.TrimSpace(fm.Mode),
 	}, nil
+}
+
+func trimList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

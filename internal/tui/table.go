@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	ColIDWidth      = 28
-	ColSubjectWidth = 32
+	ColIDWidth      = 10
+	ColSubjectWidth = 62
 	ColStateWidth   = 16
 	ColAgentWidth   = 18
+	ColLabelsWidth  = 30
 	ColParentWidth  = 14
 )
 

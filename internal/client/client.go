@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"slices"
 )
 
 type Client struct {
@@ -344,6 +345,27 @@ func (c *Client) AddTaskComment(id TaskID, who string, comment string) error {
 		"comment_id": cm.ID, "who": who,
 	}})
 	return nil
+}
+
+// GetTasksByLabel returns all tasks whose Labels slice contains the given
+// label. Empty label returns no results — callers wanting "all tasks" should
+// use ListTasks. Filtering is done client-side since labels are an in-memory
+// slice on each task; no backend index is maintained.
+func (c *Client) GetTasksByLabel(label string) ([]Task, error) {
+	if label == "" {
+		return nil, nil
+	}
+	all, err := c.backend.Tasks().GetAll()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Task, 0, len(all))
+	for _, t := range all {
+		if slices.Contains(t.Labels, label) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 // GetTasksByParent returns all tasks whose ParentID matches the given id.
