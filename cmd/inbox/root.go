@@ -47,14 +47,15 @@ var Cmd = &cli.Command{
 		}
 
 		limit := int(command.Int("limit"))
-		printTasks(box.Tasks)
+		resolver := tui.NewResolver(cfg.Styling)
+		printTasks(box.Tasks, resolver)
 		fmt.Println()
 		printChanges(box.RecentChanges, box.LastSeenAt, limit)
 		return nil
 	},
 }
 
-func printTasks(tasks []client.Task) {
+func printTasks(tasks []client.Task, resolver *tui.Resolver) {
 	bold := color.New(color.Bold).Sprint
 	fmt.Println(bold("Tasks"))
 	if len(tasks) == 0 {
@@ -71,7 +72,7 @@ func printTasks(tasks []client.Task) {
 		printTaskRow(
 			t.ID,
 			tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
-			tui.TaskStateBadge(t.State),
+			resolver.StateBadge(t.State),
 			parent,
 		)
 	}

@@ -11,8 +11,8 @@ import (
 )
 
 type Config struct {
-	Backend string            `yaml:"backend"`
-	Options map[string]string `yaml:"options"`
+	Backend string            `yaml:"backend,omitempty"`
+	Options map[string]string `yaml:"options,omitempty"`
 
 	// ProjectRoot is the absolute path of the discovered TM project root, or
 	// "" when no project marker (taskmanager.yaml or .tm/) was found walking
@@ -23,6 +23,12 @@ type Config struct {
 	// Loaded from YAML; cmd entry points may override after DefaultConfig
 	// returns. Falls back to ActorSystem when empty.
 	Actor string `yaml:"actor,omitempty"`
+
+	// Styling overrides the default TUI palette for task states and labels.
+	// Loaded from YAML; merged across global ~/.tm/taskmanager.yaml and the
+	// project taskmanager.yaml. Missing entries fall through to built-in
+	// defaults at render time (see internal/tui).
+	Styling Styling `yaml:"styling,omitempty"`
 }
 
 // CfgKey is the context.Value key callers (cmd, internal/mcp, ...) use to
@@ -32,7 +38,7 @@ type Config struct {
 var CfgKey = (*Config)(nil)
 
 const (
-	globalConfigSubpath   = ".tm/config.yaml"
+	globalConfigSubpath   = ".tm/taskmanager.yaml"
 	projectConfigFilename = "taskmanager.yaml"
 	localConfigFilename   = "taskmanager.local.yaml"
 	projectDataDir        = ".tm"
@@ -107,12 +113,22 @@ func ConfigFromYAML(filename string) (*Config, error) {
 	return &cfg, nil
 }
 
-// DefaultConfig loads the global config from ~/.tm/config.yaml, then merges
-// <root>/taskmanager.yaml and <root>/taskmanager.local.yaml where <root> is
-// the project root discovered by walking up from cwd. All files are optional.
-// Later layers override earlier ones: a non-empty Backend wins, and Options
-// merges per-key. The discovered root (or "" if none) is returned via
-// Config.ProjectRoot so backends and commands can use it without re-walking.
+// DefaultConfig loads config layers in this order, with each layer
+// overriding the previous:
+//
+//  1. ~/.tm/taskmanager.yaml — global defaults shared across all projects.
+//     `tm init` writes the default styling block here (if missing) so the
+//     palette lives in one place and travels across projects.
+//  2. <project_root>/taskmanager.yaml — checked-in project config, written
+//     by `tm init --cwd` to pin the backend selector. Project files are
+//     intentionally NOT seeded with a styling block so they don't silently
+//     shadow the global defaults.
+//  3. <project_root>/taskmanager.local.yaml — per-user / per-machine
+//     overrides typically left out of version control.
+//
+// All files are optional. The discovered root (or "" if none) is returned
+// via Config.ProjectRoot so backends and commands can use it without
+// re-walking.
 func DefaultConfig() (*Config, error) {
 	var global *Config
 	if home, err := os.UserHomeDir(); err == nil {
@@ -175,6 +191,7 @@ func mergeConfigs(global, project *Config) *Config {
 			}
 			merged.Options[k] = v
 		}
+		merged.Styling = global.Styling
 	}
 	if project != nil {
 		if project.Backend != "" {
@@ -189,6 +206,7 @@ func mergeConfigs(global, project *Config) *Config {
 			}
 			merged.Options[k] = v
 		}
+		merged.Styling = mergeStyling(merged.Styling, project.Styling)
 	}
 	return merged
 }
