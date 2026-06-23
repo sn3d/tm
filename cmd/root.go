@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/sn3d/tm/cmd/board"
 	"github.com/sn3d/tm/cmd/inbox"
 	"github.com/sn3d/tm/cmd/journal"
 	"github.com/sn3d/tm/cmd/task"
@@ -39,6 +40,7 @@ var Root = &cli.Command{
 		task.CommentCmd,
 		task.ArchiveCmd,
 		task.UnarchiveCmd,
+		board.Cmd,
 		journal.Cmd,
 		inbox.Cmd,
 		mcpCmd,

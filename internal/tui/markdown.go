@@ -17,7 +17,7 @@ func Markdown(s string) string {
 		return s
 	}
 
-	width := terminalWidth()
+	width := TerminalWidth()
 	style := styles.AutoStyle
 	if width == 0 {
 		style = styles.NoTTYStyle
@@ -42,9 +42,9 @@ func Markdown(s string) string {
 	return out
 }
 
-// terminalWidth returns the stdout terminal width in columns, or 0 when
+// TerminalWidth returns the stdout terminal width in columns, or 0 when
 // stdout is not a TTY.
-func terminalWidth() int {
+func TerminalWidth() int {
 	fd := int(os.Stdout.Fd())
 	if !term.IsTerminal(fd) {
 		return 0

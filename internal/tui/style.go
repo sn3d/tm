@@ -141,6 +141,41 @@ func (r *Resolver) LabelBadge(name string) string {
 	return applyColor(st.Color, text)
 }
 
+// StateText renders just the colored state name, no icon. Used in places
+// where emoji width would break alignment — multi-cell glyphs render
+// inconsistently in some terminals (e.g. iTerm in certain modes) and a
+// fixed-width grid can't recover from that.
+func (r *Resolver) StateText(s client.TaskState) string {
+	st, ok := r.states[string(s)]
+	if !ok {
+		st = r.unknownState
+	}
+	return applyColor(st.Color, string(s))
+}
+
+// LabelText renders just the colored label name, no icon. Companion to
+// StateText for grids that can't tolerate emoji-width variance.
+func (r *Resolver) LabelText(name string) string {
+	st, ok := r.labels[name]
+	if !ok {
+		st = r.labelsDefault
+	}
+	return applyColor(st.Color, name)
+}
+
+// LabelsText renders multiple labels as icon-less colored names joined by
+// ", ". Companion to LabelsBadge.
+func (r *Resolver) LabelsText(names []string) string {
+	if len(names) == 0 {
+		return Dash("")
+	}
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = r.LabelText(n)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // LabelsBadge renders multiple labels joined by ", ". Used by the LABELS
 // column in `tm list`. Empty input returns the dim em-dash via Dash.
 func (r *Resolver) LabelsBadge(names []string) string {
