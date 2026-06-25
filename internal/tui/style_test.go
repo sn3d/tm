@@ -112,6 +112,39 @@ func TestResolver_LabelsBadge_EmptyReturnsDash(t *testing.T) {
 	}
 }
 
+func TestResolver_StateText_NoIcon(t *testing.T) {
+	r := NewResolver(client.Styling{})
+	got := r.StateText(client.TaskStateTodo)
+	if strings.Contains(got, "📋") {
+		t.Errorf("StateText must strip the icon, got %q", got)
+	}
+	if !strings.Contains(got, "todo") {
+		t.Errorf("expected state name in %q", got)
+	}
+}
+
+func TestResolver_LabelText_NoIcon(t *testing.T) {
+	r := NewResolver(client.Styling{})
+	got := r.LabelText("plan")
+	if strings.Contains(got, "📝") {
+		t.Errorf("LabelText must strip the icon, got %q", got)
+	}
+	if !strings.Contains(got, "plan") {
+		t.Errorf("expected label name in %q", got)
+	}
+}
+
+func TestResolver_LabelsText_NoIconsAndJoined(t *testing.T) {
+	r := NewResolver(client.Styling{})
+	got := r.LabelsText([]string{"plan", "bug"})
+	if strings.Contains(got, "📝") || strings.Contains(got, "🐛") {
+		t.Errorf("LabelsText must strip icons, got %q", got)
+	}
+	if !strings.Contains(got, ",") {
+		t.Errorf("expected comma separator in %q", got)
+	}
+}
+
 func TestResolver_HexColor_DoesNotCrash(t *testing.T) {
 	user := client.Styling{
 		States: map[string]client.Style{
