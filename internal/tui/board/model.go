@@ -33,6 +33,14 @@ type LoadDetailFunc func(id client.TaskID) (TaskDetail, error)
 // after the user submits the comment textarea.
 type CommentFunc func(id client.TaskID, body string) error
 
+// ArchiveFunc soft-archives a task. The board cascades to descendants by
+// default — matching the `tm archive` CLI — so an archive on the board
+// hides the same set of tasks the CLI would hide. The returned count is
+// the number of cascaded descendants (0 if archive was a no-op or only
+// the named task was affected); the footer reports it so users see
+// whether children went with the parent. Errors surface in the footer.
+type ArchiveFunc func(id client.TaskID) (cascaded int, err error)
+
 // EditDescriptionFunc opens the user's $EDITOR pre-populated with the
 // current description, then saves the result. Returned tea.Cmd lets the
 // runtime suspend the alt-screen, run the editor in the parent terminal,
@@ -74,6 +82,7 @@ type Model struct {
 	loadDetail      LoadDetailFunc
 	addComment      CommentFunc
 	editDescription EditDescriptionFunc
+	archive         ArchiveFunc
 
 	// Layout, updated on WindowSizeMsg. Zero on first frame; View tolerates
 	// that by falling back to a sensible default width.
@@ -125,6 +134,7 @@ func NewModel(
 	loadDetail LoadDetailFunc,
 	addComment CommentFunc,
 	editDescription EditDescriptionFunc,
+	archive ArchiveFunc,
 ) Model {
 	return Model{
 		resolver:        resolver,
@@ -133,6 +143,7 @@ func NewModel(
 		loadDetail:      loadDetail,
 		addComment:      addComment,
 		editDescription: editDescription,
+		archive:         archive,
 	}
 }
 
@@ -154,6 +165,7 @@ var boardKeys = []keyBinding{
 	{keys: []string{"enter"}, help: "open task details"},
 	{keys: []string{"shift+L"}, help: "move card to next column"},
 	{keys: []string{"shift+H"}, help: "move card to previous column"},
+	{keys: []string{"a"}, help: "archive card (cascades to descendants)"},
 	{keys: []string{"r"}, help: "reload"},
 	{keys: []string{"?"}, help: "toggle this help"},
 	{keys: []string{"q", "ctrl+c"}, help: "quit"},
@@ -168,6 +180,7 @@ var detailKeys = []keyBinding{
 	{keys: []string{"e"}, help: "edit description in $EDITOR"},
 	{keys: []string{"shift+L"}, help: "move task to next column"},
 	{keys: []string{"shift+H"}, help: "move task to previous column"},
+	{keys: []string{"a"}, help: "archive task (cascades to descendants)"},
 	{keys: []string{"r"}, help: "reload"},
 	{keys: []string{"?"}, help: "toggle this help"},
 	{keys: []string{"q", "ctrl+c"}, help: "quit"},
@@ -196,6 +209,12 @@ type detailLoadedMsg struct {
 type commentSubmittedMsg struct{}
 
 type editDescriptionDoneMsg struct{}
+
+// taskArchivedMsg flows back from archiveCmd. The Update handler treats
+// this like a successful state mutation: set status, reload the board,
+// and (if we were in detail/comment mode) pop back to the board because
+// the archived task is no longer in the default view.
+type taskArchivedMsg struct{ cascaded int }
 
 // ErrorMsg is the public error signal — closures in cmd/board surface
 // errors by returning this so the board's Update can route them through
@@ -250,6 +269,16 @@ func commentCmd(post CommentFunc, id client.TaskID, body string) tea.Cmd {
 	}
 }
 
+func archiveCmd(archive ArchiveFunc, id client.TaskID) tea.Cmd {
+	return func() tea.Msg {
+		cascaded, err := archive(id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return taskArchivedMsg{cascaded: cascaded}
+	}
+}
+
 // Update is the heart of the model. Every message routes through here; the
 // returned Model is the next state, and the returned Cmd (if any) schedules
 // async follow-up work. Mode-agnostic messages (size, errors, reload
@@ -297,6 +326,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editDescriptionDoneMsg, DescriptionEditedMsg:
 		m.status = "description updated"
 		return m, loadDetailCmd(m.loadDetail, m.detail.Task.ID)
+
+	case taskArchivedMsg:
+		// Archived tasks are hidden from the default board view, so pop
+		// back to the board regardless of where the action was triggered
+		// — leaving the detail view open on a task the next reload will
+		// drop would be confusing. Only touch the textarea if it was
+		// actually initialised (entering comment-input mode is what
+		// constructs it) — calling Reset on a zero-value textarea
+		// panics inside its viewport.
+		if msg.cascaded > 0 {
+			m.status = fmt.Sprintf("archived (+ %d descendants)", msg.cascaded)
+		} else {
+			m.status = "archived"
+		}
+		if m.mode == viewCommentInput {
+			m.commentInput.Reset()
+			m.commentInput.Blur()
+		}
+		m.mode = viewBoard
+		m.detail = TaskDetail{}
+		m.detailScroll = 0
+		return m, loadCmd(m.load)
 
 	case errMsg:
 		m.status = msg.err.Error()
@@ -355,6 +406,12 @@ func (m Model) updateBoard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moveSelected(+1)
 	case "H":
 		return m.moveSelected(-1)
+	case "a":
+		sel, ok := m.selected()
+		if !ok || m.archive == nil {
+			return m, nil
+		}
+		return m, archiveCmd(m.archive, sel.ID)
 	case "enter":
 		sel, ok := m.selected()
 		if !ok || m.loadDetail == nil {
@@ -408,6 +465,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moveDetail(+1)
 	case "H":
 		return m.moveDetail(-1)
+	case "a":
+		if m.archive == nil || m.detail.Task.ID == "" {
+			return m, nil
+		}
+		return m, archiveCmd(m.archive, m.detail.Task.ID)
 	}
 	return m, nil
 }
@@ -636,9 +698,9 @@ func (m Model) renderFooter() string {
 	var hint string
 	switch m.mode {
 	case viewBoard:
-		hint = "←→/hl columns · ↑↓/jk rows · enter detail · shift+L/H move · ? help · q quit"
+		hint = "←→/hl columns · ↑↓/jk rows · enter detail · shift+L/H move · a archive · ? help · q quit"
 	case viewDetail:
-		hint = "←/esc back · ↑↓ scroll · c comment · e edit · shift+L/H move · ? help · q quit"
+		hint = "←/esc back · ↑↓ scroll · c comment · e edit · shift+L/H move · a archive · ? help · q quit"
 	case viewCommentInput:
 		hint = "ctrl+s submit · esc cancel"
 	}

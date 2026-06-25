@@ -186,8 +186,17 @@ var Cmd = &cli.Command{
 			})
 		}
 
+		// archive matches `tm archive` CLI behaviour: cascade to descendants
+		// by default. The cascaded count flows through so the board footer
+		// can report "archived (+ N descendants)" — mirroring what the CLI
+		// prints — instead of leaving the user guessing which children
+		// silently disappeared from the next reload.
+		archive := func(id client.TaskID) (int, error) {
+			return c.ArchiveTask(id, true)
+		}
+
 		resolver := tui.NewResolver(cfg.Styling)
-		model := boardview.NewModel(resolver, load, move, loadDetail, addComment, editDescription)
+		model := boardview.NewModel(resolver, load, move, loadDetail, addComment, editDescription, archive)
 		_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
 		return err
 	},

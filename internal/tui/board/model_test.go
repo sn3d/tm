@@ -33,6 +33,7 @@ func buildModel(t *testing.T, tasks []client.Task) Model {
 		},
 		func(id client.TaskID, body string) error { return nil },
 		func(id client.TaskID, current string) tea.Cmd { return nil },
+		func(id client.TaskID) (int, error) { return 0, nil },
 	)
 	// Skip Init by injecting the loaded state directly. Tea would have
 	// done this for us via Init → tasksLoadedMsg but tests want a known
@@ -214,6 +215,7 @@ func TestUpdate_ShiftLMoveTriggersMoveCmd(t *testing.T) {
 		},
 		func(id client.TaskID, body string) error { return nil },
 		func(id client.TaskID, current string) tea.Cmd { return nil },
+		func(id client.TaskID) (int, error) { return 0, nil },
 	)
 	next, _ := m.Update(tasksLoadedMsg{tasks: sampleTasks()})
 	m = next.(Model)
@@ -253,6 +255,96 @@ func TestUpdate_ShiftLAtRightEdgeSetsStatusNotMove(t *testing.T) {
 	}
 	if m.status == "" {
 		t.Errorf("expected status message at edge, got empty")
+	}
+}
+
+func TestUpdate_ArchiveKeyTriggersArchiveCmd(t *testing.T) {
+	var archived client.TaskID
+	m := NewModel(newResolver(),
+		func() ([]client.Task, error) { return sampleTasks(), nil },
+		func(id client.TaskID, to client.TaskState) error { return nil },
+		func(id client.TaskID) (TaskDetail, error) {
+			return TaskDetail{Task: client.Task{ID: id}}, nil
+		},
+		func(id client.TaskID, body string) error { return nil },
+		func(id client.TaskID, current string) tea.Cmd { return nil },
+		func(id client.TaskID) (int, error) {
+			archived = id
+			return 2, nil
+		},
+	)
+	next, _ := m.Update(tasksLoadedMsg{tasks: sampleTasks()})
+	m = next.(Model)
+
+	// Backlog row 0 = task #1 (todo-a). Pressing 'a' archives it.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("expected archive cmd, got nil")
+	}
+	msg := cmd()
+	if _, ok := msg.(taskArchivedMsg); !ok {
+		t.Fatalf("expected taskArchivedMsg, got %T (%v)", msg, msg)
+	}
+	if archived != "1" {
+		t.Errorf("expected archive id=1, got %q", archived)
+	}
+}
+
+func TestUpdate_TaskArchivedMsgReturnsToBoardFromDetail(t *testing.T) {
+	m := buildModel(t, sampleTasks())
+	// Open detail for task #1.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.mode != viewDetail {
+		t.Fatalf("setup: expected viewDetail, got %v", m.mode)
+	}
+	next, _ = m.Update(taskArchivedMsg{})
+	m = next.(Model)
+	if m.mode != viewBoard {
+		t.Errorf("expected viewBoard after archive, got %v", m.mode)
+	}
+	if m.detail.Task.ID != "" {
+		t.Errorf("expected detail cleared after archive, got %q", m.detail.Task.ID)
+	}
+	if m.status != "archived" {
+		t.Errorf("expected status=archived, got %q", m.status)
+	}
+}
+
+func TestUpdate_TaskArchivedMsgReportsCascadedCount(t *testing.T) {
+	m := buildModel(t, sampleTasks())
+	next, _ := m.Update(taskArchivedMsg{cascaded: 3})
+	m = next.(Model)
+	if !strings.Contains(m.status, "3") {
+		t.Errorf("expected status to mention cascaded count, got %q", m.status)
+	}
+}
+
+func TestUpdate_ArchiveKeyOnEmptyBoardIsNoOp(t *testing.T) {
+	called := false
+	m := NewModel(newResolver(),
+		func() ([]client.Task, error) { return nil, nil },
+		func(id client.TaskID, to client.TaskState) error { return nil },
+		func(id client.TaskID) (TaskDetail, error) {
+			return TaskDetail{Task: client.Task{ID: id}}, nil
+		},
+		func(id client.TaskID, body string) error { return nil },
+		func(id client.TaskID, current string) tea.Cmd { return nil },
+		func(id client.TaskID) (int, error) {
+			called = true
+			return 0, nil
+		},
+	)
+	next, _ := m.Update(tasksLoadedMsg{tasks: nil})
+	m = next.(Model)
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+	if cmd != nil {
+		t.Errorf("expected no cmd on empty board, got %T", cmd())
+	}
+	if called {
+		t.Errorf("archive func should not run when nothing is selected")
 	}
 }
 
@@ -427,6 +519,7 @@ func TestUpdate_CommentInputCtrlSSubmits(t *testing.T) {
 			return nil
 		},
 		func(id client.TaskID, current string) tea.Cmd { return nil },
+		func(id client.TaskID) (int, error) { return 0, nil },
 	)
 	next, _ := m.Update(tasksLoadedMsg{tasks: sampleTasks()})
 	m = next.(Model)
