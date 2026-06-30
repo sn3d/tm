@@ -698,9 +698,9 @@ func (m Model) renderFooter() string {
 	var hint string
 	switch m.mode {
 	case viewBoard:
-		hint = "←→/hl columns · ↑↓/jk rows · enter detail · shift+L/H move · a archive · ? help · q quit"
+		hint = "←→/hl columns · ↑↓/jk rows · enter detail · shift+L/H move · a archive · r reload · ? help · q quit"
 	case viewDetail:
-		hint = "←/esc back · ↑↓ scroll · c comment · e edit · shift+L/H move · a archive · ? help · q quit"
+		hint = "←/esc back · ↑↓ scroll · c comment · e edit · shift+L/H move · a archive · r reload · ? help · q quit"
 	case viewCommentInput:
 		hint = "ctrl+s submit · esc cancel"
 	}
