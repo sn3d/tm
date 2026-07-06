@@ -41,25 +41,90 @@ var columns = []Column{
 		States: []client.TaskState{client.TaskStateDone, client.TaskStateCancelled}},
 }
 
+// cardSlotLines is the vertical space one card occupies in a column,
+// including the blank separator that precedes every card after the first.
+// A card body is at most 3 lines (id / agent / labels); the +1 accounts for
+// the separator. Windowing math treats every card as this fixed height so
+// the visible-count is stable regardless of which cards carry a labels row.
+const cardSlotLines = 4
+
+// columnHeaderLines is the number of lines columnBody emits before the first
+// card: the "Title (n)" header plus a blank separator.
+const columnHeaderLines = 2
+
+// visibleCardCapacity is how many cards fit in one column for the given
+// terminal height. The budget must leave room for everything columnBody and
+// View draw around the cards, or a mid-scrolled column pushes its bottom
+// border (and the footer) off-screen — the exact overflow this windowing
+// fixes. Reserved, top to bottom:
+//
+//   - borderRows (2): the column's ╭ top and ╰ bottom frame rows.
+//   - columnHeaderLines (2): the "Title (n)" header + its blank separator.
+//   - hintRows (3): worst case a scrolled column shows a top "↑ N more"
+//     hint (1 line) AND a bottom "↓ N more" hint (blank + line = 2). We
+//     always reserve both so scrolling never overflows, at the cost of one
+//     unused row in the columns that happen to show only one hint.
+//   - footerReserve (2): View appends the footer — one hint line that can
+//     wrap to two on narrow terminals, plus a status line when set. Two is
+//     the common ceiling; a wrapped hint on a very narrow terminal can still
+//     nudge past it, but that degrades to one clipped card, not a broken grid.
+//
+// The remaining rows hold cards. Each card is at most 3 lines and every card
+// after the first adds a 1-line separator, so C cards occupy 4C-1 rows — the
+// slot model counts 4C and the spare row absorbs rounding. Floored at 1 so a
+// tiny terminal still shows the selected card rather than nothing.
+func visibleCardCapacity(height int) int {
+	const (
+		borderRows    = 2 // ╭ top + ╰ bottom
+		hintRows      = 3 // top hint (1) + bottom hint (blank + line = 2)
+		footerReserve = 2 // wrapped hint line + optional status line
+	)
+	avail := height - borderRows - columnHeaderLines - hintRows - footerReserve
+	// +1 recovers the missing separator before the first card (4C-1 rows for
+	// C cards), so a column exactly filling `avail` isn't under-counted.
+	capacity := (avail + 1) / cardSlotLines
+	if capacity < 1 {
+		return 1
+	}
+	return capacity
+}
+
 // render produces the kanban view as a single string. totalWidth is the
 // terminal column count; the function divides it into 4 lanes minus
-// borders/padding. Tasks are routed into columns by State; any task whose
+// borders/padding. totalHeight bounds each column to a scrolling window of
+// cards — columns taller than the terminal show only capacity cards starting
+// at scrollOff[colIdx], with "↑ N more" / "↓ N more" hints marking the
+// hidden remainder. Tasks are routed into columns by State; any task whose
 // state doesn't match any column (shouldn't happen with the canonical 7
 // states) is dropped silently rather than rendered into a fallback column —
 // surfacing that case is a job for tm list, not the kanban view.
 //
 // Pure: no terminal I/O, no global state. Called by Model.View.
-func render(tasks []client.Task, resolver *tui.Resolver, totalWidth int, selectedID client.TaskID) string {
+func render(tasks []client.Task, resolver *tui.Resolver, totalWidth, totalHeight int, selectedID client.TaskID, scrollOff []int) string {
 	colW := columnWidth(totalWidth)
+	capacity := visibleCardCapacity(totalHeight)
 	grouped := groupByColumn(tasks)
 	bodies := make([]string, len(columns))
 	maxLines := 0
 	for i, col := range columns {
-		bodies[i] = columnBody(col, grouped[i], resolver, colW, selectedID)
+		off := 0
+		if i < len(scrollOff) {
+			off = scrollOff[i]
+		}
+		bodies[i] = columnBody(col, grouped[i], resolver, colW, selectedID, off, capacity)
 		if n := strings.Count(bodies[i], "\n") + 1; n > maxLines {
 			maxLines = n
 		}
 	}
+	// Pad to a target line count that depends only on capacity, not on the
+	// current contents. A full window's body is columnHeaderLines + top hint
+	// (1) + cards (4·capacity − 1) + bottom hint (2). Because columnBody now
+	// always reserves the hint rows, this is the tallest any column can be, so
+	// padding every column to it makes the whole board a constant height —
+	// the footer below it no longer shifts as the user scrolls hints in and
+	// out. maxLines is a floor guard in case a body somehow exceeds the
+	// computed target (it shouldn't, but padding never truncates).
+	target := max(columnHeaderLines+1+(cardSlotLines*capacity-1)+2, maxLines)
 	// Pad each column body to the same line count BEFORE wrapping it in
 	// the bordered style. JoinHorizontal does not equalise column heights,
 	// and styling a column to a target Height re-wraps any pre-existing
@@ -67,7 +132,7 @@ func render(tasks []client.Task, resolver *tui.Resolver, totalWidth int, selecte
 	// let lipgloss only draw a single border around each.
 	rendered := make([]string, len(columns))
 	for i, body := range bodies {
-		padded := padLines(body, maxLines)
+		padded := padLines(body, target)
 		rendered[i] = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
@@ -163,24 +228,55 @@ const (
 )
 
 // columnBody produces just the inside of one column — header, blank
-// separator, then cards. selectedID, when non-empty, prefixes the matching
-// card's first line with a bold marker. Non-selected cards reserve the
-// same two-cell gutter with whitespace so every card aligns vertically.
-// The caller wraps this in the bordered style after equalising line counts
-// across columns.
-func columnBody(col Column, tasks []client.Task, resolver *tui.Resolver, width int, selectedID client.TaskID) string {
+// separator, then a window of at most `capacity` cards starting at `off`.
+// selectedID, when non-empty, prefixes the matching card's first line with a
+// bold marker. Non-selected cards reserve the same two-cell gutter with
+// whitespace so every card aligns vertically. When cards are hidden above or
+// below the window, an "↑ N more" / "↓ N more" hint replaces the top/bottom
+// of the visible slice so the user knows the column continues. The caller
+// wraps this in the bordered style after equalising line counts across
+// columns.
+func columnBody(col Column, tasks []client.Task, resolver *tui.Resolver, width int, selectedID client.TaskID, off, capacity int) string {
 	header := titleStyle.Render(col.Title) + " " + dimStyle.Render(fmt.Sprintf("(%d)", len(tasks)))
 	lines := []string{header, ""}
-	for i, t := range tasks {
-		if i > 0 {
+
+	// Clamp the window to the available cards. off is trusted from the
+	// Model's scroll tracking, but a shrunk terminal or a reload can leave
+	// it past the end. Bound start at len-capacity (the same maxOff syncScroll
+	// enforces) rather than len, so a stale offset degrades to the last full
+	// window of cards instead of an empty column showing only an "↑ N more"
+	// hint.
+	maxOff := max(len(tasks)-capacity, 0)
+	start := min(max(off, 0), maxOff)
+	end := min(start+capacity, len(tasks))
+
+	// The top and bottom "↑/↓ N more" hints each occupy a fixed row (the
+	// bottom hint also carries a leading blank). We ALWAYS reserve those rows
+	// — emitting a blank placeholder when there's nothing hidden — so a
+	// column's height doesn't change as the user scrolls a hint into or out
+	// of view. Without this the board's total height would fluctuate and the
+	// footer below it would jump.
+	if start > 0 {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
+	} else {
+		lines = append(lines, "")
+	}
+	for i := start; i < end; i++ {
+		if i > start {
 			lines = append(lines, "")
 		}
+		t := tasks[i]
 		selected := selectedID != "" && t.ID == selectedID
 		// Card content area shrinks by the gutter width so the marker
 		// doesn't push the right border out.
 		card := renderCard(t, col.Header, resolver, width-4-len(markerGutter), selected)
 		card = applyMarker(card, selected)
 		lines = append(lines, card)
+	}
+	if end < len(tasks) {
+		lines = append(lines, "", dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(tasks)-end)))
+	} else {
+		lines = append(lines, "", "")
 	}
 	return strings.Join(lines, "\n")
 }

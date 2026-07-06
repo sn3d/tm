@@ -119,7 +119,7 @@ func TestRender_ColumnTitlesAndCounts(t *testing.T) {
 		{ID: "4", Subject: "d", State: client.TaskStateDone},
 		{ID: "5", Subject: "e", State: client.TaskStateCancelled},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	for _, want := range []string{
 		"Backlog", "(1)",
 		"In Progress", "(1)",
@@ -141,7 +141,7 @@ func TestRender_BlockedShowsStateBadgeInProgressColumn(t *testing.T) {
 	tasks := []client.Task{
 		{ID: "B", Subject: "blocked one", State: client.TaskStateBlocked},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	if !strings.Contains(out, "blocked") {
 		t.Errorf("expected blocked state to render, output:\n%s", out)
 	}
@@ -156,7 +156,7 @@ func TestRender_TodoCardSuppressesStateBadge(t *testing.T) {
 	tasks := []client.Task{
 		{ID: "T", Subject: "neutral subject", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	// A todo card in the Backlog column should NOT emit a "todo" badge —
 	// the column header already implies the state. The text "Backlog" is
 	// the column title and is allowed; the bare word "todo" on a card is
@@ -171,7 +171,7 @@ func TestRender_UnassignedShowsDash(t *testing.T) {
 	tasks := []client.Task{
 		{ID: "U", Subject: "no agent", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	if !strings.Contains(out, "—") {
 		t.Errorf("expected em-dash for unassigned, got:\n%s", out)
 	}
@@ -182,7 +182,7 @@ func TestRender_SelectionMarkerOnFocusedCardOnly(t *testing.T) {
 		{ID: "1", Subject: "first", State: client.TaskStateTodo},
 		{ID: "2", Subject: "second", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, "1")
+	out := render(tasks, newResolver(), 200, 200, "1", nil)
 	// The marker must appear before card #1's ID and NOT before card #2's.
 	first := strings.Index(out, "#1")
 	second := strings.Index(out, "#2")
@@ -205,7 +205,7 @@ func TestRender_ChildCardShowsParentID(t *testing.T) {
 		{ID: "child-7", Subject: "do the thing", State: client.TaskStateTodo,
 			AssignedAgent: "bob", ParentID: "plan-1"},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	if !strings.Contains(out, "#plan-1") {
 		t.Errorf("expected child to show parent id #plan-1, got:\n%s", out)
 	}
@@ -219,7 +219,7 @@ func TestRender_TopLevelCardOmitsParentReference(t *testing.T) {
 	tasks := []client.Task{
 		{ID: "root", Subject: "no parent", State: client.TaskStateTodo, AssignedAgent: "alice"},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	// "#root" appears as the card's own ID; check that the assignee line
 	// doesn't gain a trailing "#" parent reference.
 	if strings.Contains(out, "@alice  #") {
@@ -227,11 +227,119 @@ func TestRender_TopLevelCardOmitsParentReference(t *testing.T) {
 	}
 }
 
+func TestVisibleCardCapacity(t *testing.T) {
+	tests := []struct {
+		name   string
+		height int
+		want   int
+	}{
+		// Reserve = border(2) + header(2) + hints(3) + footer(2) = 9, then
+		// (height - 9 + 1) / 4 = (height - 8) / 4.
+		// (40-8)/4 = 8.
+		{"large terminal", 40, 8},
+		// (30-8)/4 = 5.
+		{"typical terminal", 30, 5},
+		// (16-8)/4 = 2.
+		{"short terminal", 16, 2},
+		// Below one slot's worth of room still yields at least one card.
+		{"tiny terminal floors at 1", 8, 1},
+		{"zero height floors at 1", 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := visibleCardCapacity(tt.height); got != tt.want {
+				t.Errorf("visibleCardCapacity(%d) = %d, want %d", tt.height, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRender_WindowsTallColumnWithMoreHints(t *testing.T) {
+	// Ten todo cards into a terminal that fits only a couple per column.
+	var tasks []client.Task
+	base := time.Unix(1000, 0).UTC()
+	for i := range 10 {
+		tasks = append(tasks, client.Task{
+			ID:      string(rune('a' + i)),
+			Subject: "card",
+			State:   client.TaskStateTodo,
+			// Ascending CreatedAt so groupByColumn keeps them in a-j order.
+			CreatedAt: base.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	// height 16 → capacity 2. Window starts at offset 3 in the Backlog column.
+	scrollOff := []int{3, 0, 0, 0}
+	out := render(tasks, newResolver(), 200, 16, "", scrollOff)
+
+	// 3 cards hidden above, cards d & e visible, 5 hidden below.
+	if !strings.Contains(out, "↑ 3 more") {
+		t.Errorf("expected '↑ 3 more' hint, got:\n%s", out)
+	}
+	if !strings.Contains(out, "↓ 5 more") {
+		t.Errorf("expected '↓ 5 more' hint, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#d") || !strings.Contains(out, "#e") {
+		t.Errorf("expected windowed cards #d and #e, got:\n%s", out)
+	}
+	// A card above the window (#a) must not render.
+	if strings.Contains(out, "#a") {
+		t.Errorf("expected #a hidden above window, got:\n%s", out)
+	}
+	// A card below the window (#j) must not render.
+	if strings.Contains(out, "#j") {
+		t.Errorf("expected #j hidden below window, got:\n%s", out)
+	}
+}
+
+func TestRender_HeightStableAcrossScroll(t *testing.T) {
+	// The board's total line count must not change as the user scrolls, so
+	// the footer rendered below it stays put. Hints appearing/disappearing
+	// and different per-column card counts must not alter the height.
+	var tasks []client.Task
+	base := time.Unix(1000, 0).UTC()
+	for i := range 20 {
+		tasks = append(tasks, client.Task{
+			ID:        string(rune('a' + i)),
+			Subject:   "card",
+			State:     client.TaskStateTodo,
+			CreatedAt: base.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	const height = 24
+	lineCount := func(off int) int {
+		out := render(tasks, newResolver(), 200, height, "", []int{off, 0, 0, 0})
+		return strings.Count(out, "\n") + 1
+	}
+	// top (no up-hint), middle (both hints), bottom (no down-hint).
+	top, mid, bottom := lineCount(0), lineCount(5), lineCount(18)
+	if top != mid || mid != bottom {
+		t.Errorf("board height changed with scroll: top=%d mid=%d bottom=%d", top, mid, bottom)
+	}
+	// A board where nothing overflows must be the same height, so the footer
+	// doesn't jump when a column happens to fit entirely.
+	short := render(tasks[:2], newResolver(), 200, height, "", nil)
+	if got := strings.Count(short, "\n") + 1; got != top {
+		t.Errorf("short board height %d != scrolling board height %d", got, top)
+	}
+}
+
+func TestRender_ShortColumnHasNoMoreHints(t *testing.T) {
+	tasks := []client.Task{
+		{ID: "1", Subject: "a", State: client.TaskStateTodo},
+		{ID: "2", Subject: "b", State: client.TaskStateTodo},
+	}
+	// Plenty of height — both cards fit, no hints.
+	out := render(tasks, newResolver(), 200, 40, "", nil)
+	if strings.Contains(out, "more") {
+		t.Errorf("expected no scroll hints when everything fits, got:\n%s", out)
+	}
+}
+
 func TestRender_LabelsAppliedWithPalette(t *testing.T) {
 	tasks := []client.Task{
 		{ID: "L", Subject: "labelled", State: client.TaskStateTodo, Labels: []string{"plan"}},
 	}
-	out := render(tasks, newResolver(), 200, "")
+	out := render(tasks, newResolver(), 200, 200, "", nil)
 	if !strings.Contains(out, "plan") {
 		t.Errorf("expected 'plan' label to render, got:\n%s", out)
 	}

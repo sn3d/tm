@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sn3d/tm/internal/client"
@@ -50,6 +51,108 @@ func sampleTasks() []client.Task {
 		{ID: "3", Subject: "in-progress", State: client.TaskStateInProgress},
 		{ID: "4", Subject: "review", State: client.TaskStateInReview},
 		{ID: "5", Subject: "done", State: client.TaskStateDone},
+	}
+}
+
+// manyTodos builds n todo cards in the Backlog column, ordered a, b, c...
+// by CreatedAt so groupByColumn keeps a stable index order for scroll tests.
+func manyTodos(n int) []client.Task {
+	base := time.Unix(1000, 0).UTC()
+	tasks := make([]client.Task, n)
+	for i := range n {
+		tasks[i] = client.Task{
+			ID:        string(rune('a' + i)),
+			Subject:   "card",
+			State:     client.TaskStateTodo,
+			CreatedAt: base.Add(time.Duration(i) * time.Hour),
+		}
+	}
+	return tasks
+}
+
+func TestScroll_WindowSizeBeforeLoadDoesNotPanic(t *testing.T) {
+	// Regression: bubbletea delivers a WindowSizeMsg at startup, before the
+	// async Init load resolves into tasksLoadedMsg. At that point m.grouped
+	// is empty, so syncScroll must not index it. Build a raw model (no
+	// tasksLoadedMsg injected) and feed the resize directly.
+	m := NewModel(newResolver(),
+		func() ([]client.Task, error) { return nil, nil },
+		func(client.TaskID, client.TaskState) error { return nil },
+		func(id client.TaskID) (TaskDetail, error) { return TaskDetail{}, nil },
+		func(client.TaskID, string) error { return nil },
+		func(client.TaskID, string) tea.Cmd { return nil },
+		func(client.TaskID) (int, error) { return 0, nil },
+	)
+	// Must not panic (grouped is nil here).
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	if m.height != 30 {
+		t.Errorf("expected height recorded, got %d", m.height)
+	}
+}
+
+func TestScroll_FollowsSelectionDownPastWindow(t *testing.T) {
+	m := buildModel(t, manyTodos(10))
+	m.height = 16 // capacity 2 in the Backlog column
+	m.syncScroll()
+	if m.scrollOff[0] != 0 {
+		t.Fatalf("setup: expected scrollOff[0]=0, got %d", m.scrollOff[0])
+	}
+	// Move down to row 2 — past the 2-card window (rows 0,1 visible).
+	for range 2 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(Model)
+	}
+	if m.rowIdx != 2 {
+		t.Fatalf("expected rowIdx=2, got %d", m.rowIdx)
+	}
+	// Window must have slid so the selection (row 2) is the last visible
+	// card: offset = 2 - capacity + 1 = 1.
+	if m.scrollOff[0] != 1 {
+		t.Errorf("expected scrollOff[0]=1 to keep row 2 visible, got %d", m.scrollOff[0])
+	}
+}
+
+func TestScroll_FollowsSelectionBackUp(t *testing.T) {
+	m := buildModel(t, manyTodos(10))
+	m.height = 16 // capacity 2
+	m.syncScroll()
+	// Drive down to the bottom, then back to the top.
+	for range 9 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(Model)
+	}
+	if m.scrollOff[0] == 0 {
+		t.Fatalf("setup: expected a non-zero offset after scrolling down, got 0")
+	}
+	for range 9 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m = next.(Model)
+	}
+	if m.rowIdx != 0 {
+		t.Fatalf("expected rowIdx=0 back at top, got %d", m.rowIdx)
+	}
+	if m.scrollOff[0] != 0 {
+		t.Errorf("expected scrollOff[0]=0 when selection returns to top, got %d", m.scrollOff[0])
+	}
+}
+
+func TestScroll_ResizeReclampsOffset(t *testing.T) {
+	m := buildModel(t, manyTodos(10))
+	m.height = 16 // capacity 2
+	m.syncScroll()
+	// Scroll to the bottom so the offset is large.
+	for range 9 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(Model)
+	}
+	bottomOff := m.scrollOff[0]
+	// Grow the terminal so all 10 cards fit — offset must collapse to 0.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	m = next.(Model)
+	if m.scrollOff[0] != 0 {
+		t.Errorf("expected scrollOff[0]=0 after resize fits everything (was %d), got %d",
+			bottomOff, m.scrollOff[0])
 	}
 }
 

@@ -100,6 +100,13 @@ type Model struct {
 	// can index without bounds checks.
 	colIdx, rowIdx int
 
+	// scrollOff[colIdx] is the index of the first visible card in that
+	// column — the top of the scrolling window. Columns taller than the
+	// terminal show only a slice starting here; navigating past the window
+	// edge in focusRow slides this offset so the selected card stays on
+	// screen. Re-derived to a len(columns) slice on every reload.
+	scrollOff []int
+
 	// mode dispatches Update + View. See viewMode for the meaning.
 	mode viewMode
 
@@ -293,13 +300,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commentInput.Focused() {
 			m.commentInput.SetWidth(commentTextareaWidth(m.width))
 		}
+		// A resize changes how many cards fit per column; re-clamp the
+		// windows so the selection stays visible at the new capacity.
+		m.syncScroll()
 		return m, nil
 
 	case tasksLoadedMsg:
 		m.tasks = msg.tasks
 		m.grouped = groupByColumn(msg.tasks)
+		if m.scrollOff == nil {
+			m.scrollOff = make([]int, len(columns))
+		}
 		m.status = ""
 		m.clampSelection()
+		m.syncScroll()
 		return m, nil
 
 	case cardMovedMsg:
@@ -549,6 +563,7 @@ func (m *Model) focusColumn(step int) {
 			if m.rowIdx >= len(m.grouped[m.colIdx]) {
 				m.rowIdx = max(0, len(m.grouped[m.colIdx])-1)
 			}
+			m.syncScroll()
 			return
 		}
 		idx += dir
@@ -559,6 +574,8 @@ func (m *Model) focusColumn(step int) {
 
 // focusRow moves within the current column, clamping to the column's card
 // count. Selection wraps neither up nor down — at the top, `up` is a no-op.
+// After moving, syncScroll slides the column's window so the newly focused
+// card stays visible.
 func (m *Model) focusRow(idx int) {
 	cards := m.grouped[m.colIdx]
 	if len(cards) == 0 {
@@ -572,6 +589,53 @@ func (m *Model) focusRow(idx int) {
 		idx = len(cards) - 1
 	}
 	m.rowIdx = idx
+	m.syncScroll()
+}
+
+// syncScroll adjusts the focused column's scroll offset so the selected card
+// (rowIdx) falls inside the visible window of `capacity` cards. When the
+// selection moves above the window the offset follows it up; below, the
+// window slides down so the selection sits on the last visible row. Offsets
+// for non-focused columns are left as-is (their selection isn't moving) but
+// re-clamped so a shrunk card count can't leave a stale offset past the end.
+// Safe to call with an unset height — visibleCardCapacity floors capacity at
+// 1 and View passes the same height, so the on-screen window always matches.
+func (m *Model) syncScroll() {
+	if m.scrollOff == nil {
+		m.scrollOff = make([]int, len(columns))
+	}
+	// grouped is empty until the first tasksLoadedMsg. A WindowSizeMsg can
+	// arrive before that (bubbletea sends one at startup, ahead of the async
+	// load), so bail rather than index m.grouped out of range — the offsets
+	// stay at their zero value and get synced once tasks arrive.
+	// grouped is empty until the first tasksLoadedMsg. A WindowSizeMsg can
+	// arrive before that (bubbletea sends one at startup, ahead of the async
+	// load), so bail rather than index m.grouped out of range — the offsets
+	// stay at their zero value and get synced once tasks arrive.
+	if len(m.grouped) != len(m.scrollOff) {
+		return
+	}
+	capacity := visibleCardCapacity(m.height)
+	for i := range m.scrollOff {
+		maxOff := len(m.grouped[i]) - capacity
+		if maxOff < 0 {
+			maxOff = 0
+		}
+		if m.scrollOff[i] > maxOff {
+			m.scrollOff[i] = maxOff
+		}
+		if m.scrollOff[i] < 0 {
+			m.scrollOff[i] = 0
+		}
+	}
+	// Follow the selection in the focused column.
+	off := m.scrollOff[m.colIdx]
+	if m.rowIdx < off {
+		off = m.rowIdx
+	} else if m.rowIdx >= off+capacity {
+		off = m.rowIdx - capacity + 1
+	}
+	m.scrollOff[m.colIdx] = off
 }
 
 // clampSelection keeps the focused position valid after reloads might have
@@ -664,7 +728,7 @@ func (m Model) View() string {
 			if sel, ok := m.selected(); ok {
 				selectedID = sel.ID
 			}
-			frame = render(m.tasks, m.resolver, width, selectedID) + "\n" + m.renderFooter()
+			frame = render(m.tasks, m.resolver, width, height, selectedID, m.scrollOff) + "\n" + m.renderFooter()
 		}
 	case viewDetail:
 		frame = renderDetail(m.detail, m.resolver, width, height, m.detailScroll) + "\n" + m.renderFooter()
