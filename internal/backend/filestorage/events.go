@@ -165,5 +165,8 @@ func matches(e client.Event, f client.EventFilter) bool {
 	if !f.Since.IsZero() && !e.Timestamp.After(f.Since) {
 		return false
 	}
+	if !f.Until.IsZero() && !e.Timestamp.Before(f.Until) {
+		return false
+	}
 	return true
 }

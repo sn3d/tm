@@ -8,6 +8,7 @@ import (
 	"github.com/sn3d/tm/cmd/inbox"
 	"github.com/sn3d/tm/cmd/journal"
 	"github.com/sn3d/tm/cmd/task"
+	"github.com/sn3d/tm/cmd/timesheet"
 	"github.com/sn3d/tm/internal/client"
 	"github.com/urfave/cli/v3"
 )
@@ -43,6 +44,7 @@ var Root = &cli.Command{
 		board.Cmd,
 		journal.Cmd,
 		inbox.Cmd,
+		timesheet.Cmd,
 		mcpCmd,
 	},
 }

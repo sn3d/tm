@@ -44,6 +44,7 @@ type EventFilter struct {
 	Actor  string
 	Kinds  []EventKind
 	Since  time.Time // exclusive lower bound
+	Until  time.Time // exclusive upper bound (zero = no upper bound)
 	Limit  int       // 0 = no limit
 }
 

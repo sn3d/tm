@@ -21,7 +21,7 @@ type stubBackend struct {
 func newStubBackend() *stubBackend {
 	return &stubBackend{
 		tasks:    &stubTasks{store: map[TaskID]*Task{}},
-		comments: &stubComments{},
+		comments: &stubComments{store: map[TaskID][]Comment{}},
 		events:   &stubEvents{},
 		cursors:  &stubActorCursors{store: map[string]time.Time{}},
 	}
@@ -89,6 +89,9 @@ func (s *stubEvents) List(filter EventFilter) ([]Event, error) {
 		if !filter.Since.IsZero() && !e.Timestamp.After(filter.Since) {
 			continue
 		}
+		if !filter.Until.IsZero() && !e.Timestamp.Before(filter.Until) {
+			continue
+		}
 		out = append(out, e)
 		if filter.Limit > 0 && len(out) >= filter.Limit {
 			break
@@ -145,10 +148,26 @@ func (s *stubTasks) GetByParent(parentID TaskID) ([]Task, error) {
 	return out, nil
 }
 
-type stubComments struct{}
+type stubComments struct {
+	store map[TaskID][]Comment
+	next  int
+}
 
-func (stubComments) Add(TaskID, *Comment) error           { return nil }
-func (stubComments) GetForTask(TaskID) ([]Comment, error) { return nil, nil }
+func (s *stubComments) Add(id TaskID, c *Comment) error {
+	if s.store == nil {
+		s.store = map[TaskID][]Comment{}
+	}
+	if c.ID == "" {
+		s.next++
+		c.ID = "C-" + strconv.Itoa(s.next)
+	}
+	s.store[id] = append(s.store[id], *c)
+	return nil
+}
+
+func (s *stubComments) GetForTask(id TaskID) ([]Comment, error) {
+	return append([]Comment(nil), s.store[id]...), nil
+}
 
 // seed inserts a task directly so tests can construct a graph without going
 // through Client.Create (which itself enforces validation we want to test).

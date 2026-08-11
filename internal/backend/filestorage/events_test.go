@@ -124,6 +124,38 @@ func TestEventsRepository_SinceIsExclusive(t *testing.T) {
 	}
 }
 
+func TestEventsRepository_UntilIsExclusive(t *testing.T) {
+	b := newTempBackend(t)
+	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		e := &client.Event{Kind: client.EventTaskCreated, TaskID: "t", Actor: "a", Timestamp: base.Add(time.Duration(i) * time.Second)}
+		if err := b.Events().Append(e); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	// Until == second event's timestamp: excludes it and everything after,
+	// keeping only the first event.
+	got, err := b.Events().List(client.EventFilter{Until: base.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || !got[0].Timestamp.Equal(base) {
+		t.Errorf("expected only the first event, got %+v", got)
+	}
+
+	// Since + Until window returns only the middle event.
+	got, err = b.Events().List(client.EventFilter{
+		Since: base,
+		Until: base.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || !got[0].Timestamp.Equal(base.Add(time.Second)) {
+		t.Errorf("expected only the middle event, got %+v", got)
+	}
+}
+
 func TestEventsRepository_EmptyWhenFileMissing(t *testing.T) {
 	b := newTempBackend(t)
 	got, err := b.Events().List(client.EventFilter{})

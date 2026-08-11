@@ -213,4 +213,15 @@ Handoff model: things appear here when someone changes a task's state AND reassi
 		),
 		s.handleJournalList,
 	)
+
+	s.mcp.AddTool(
+		mcp.NewTool("timesheet",
+			mcp.WithDescription("Weekly activity log built from the journal: task create/start/finish milestones plus comments WITH their full text, resolved to task subjects. Defaults to the current Mon-Sun week. One tm instance = one customer, so there is no customer grouping. Intended to be summarized into a weekly report."),
+			mcp.WithString("since", mcp.Description("Start of the window, inclusive (RFC3339). Omit to use the current week.")),
+			mcp.WithString("until", mcp.Description("End of the window, exclusive (RFC3339). Omit to use the current week.")),
+			mcp.WithBoolean("last_week", mcp.Description("Use the previous Mon-Sun week instead of the current one. Ignored if since/until are given.")),
+			mcp.WithString("actor", mcp.Description("Filter to one actor. Omit for all actors (recommended for a single-customer instance).")),
+		),
+		s.handleTimesheet,
+	)
 }

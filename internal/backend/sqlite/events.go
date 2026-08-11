@@ -58,9 +58,16 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 			args = append(args, string(k))
 		}
 	}
+	// Bounds are compared lexicographically against the stored ts strings,
+	// which are always UTC ("Z"). Normalize to UTC so a caller passing a
+	// local-zone bound (e.g. from CurrentWeek) compares correctly.
 	if !filter.Since.IsZero() {
 		conds = append(conds, "ts > ?")
-		args = append(args, filter.Since.Format(time.RFC3339Nano))
+		args = append(args, filter.Since.UTC().Format(time.RFC3339Nano))
+	}
+	if !filter.Until.IsZero() {
+		conds = append(conds, "ts < ?")
+		args = append(args, filter.Until.UTC().Format(time.RFC3339Nano))
 	}
 
 	q := "SELECT id, ts, actor, kind, task_id, payload FROM events"
