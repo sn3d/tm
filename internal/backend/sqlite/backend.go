@@ -3,28 +3,27 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/sn3d/tm/internal/client"
-	"github.com/sn3d/tm/internal/scope"
 	_ "modernc.org/sqlite"
 )
 
-// dbFilename is the default sqlite database file written inside the home
-// project directory (~/.tm/projects/<sanitized-key>/tm.db).
-const dbFilename = "tm.db"
-
 type backend struct {
-	tasks    *tasksRepository
-	comments *commentsRepository
-	events   *eventsRepository
-	cursors  *actorCursorsRepository
+	db           *sql.DB
+	projects     *projectsRepository
+	tasks        *tasksRepository
+	descriptions *descriptionsRepository
+	comments     *commentsRepository
+	events       *eventsRepository
+	cursors      *actorCursorsRepository
 }
 
 // NewBackend opens (or creates) a SQLite database at dbPath, runs any
 // pending migrations, and returns a Backend backed by it. Use ":memory:"
 // for an ephemeral in-memory store.
+//
+// One Backend is one *instance*: it holds every project in that database,
+// which is what lets the cross-project reads work on a single connection.
 func NewBackend(dbPath string) (client.Backend, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -34,47 +33,52 @@ func NewBackend(dbPath string) (client.Backend, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
-	if err := runMigrations(db); err != nil {
+	if err := runMigrations(db, dbPath); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &backend{
-		tasks:    &tasksRepository{db: db},
-		comments: &commentsRepository{db: db},
-		events:   &eventsRepository{db: db},
-		cursors:  &actorCursorsRepository{db: db},
+		db:           db,
+		projects:     &projectsRepository{db: db},
+		tasks:        &tasksRepository{db: db},
+		descriptions: &descriptionsRepository{db: db},
+		comments:     &commentsRepository{db: db},
+		events:       &eventsRepository{db: db},
+		cursors:      &actorCursorsRepository{db: db},
 	}, nil
 }
 
 // NewBackendFromOptions is the map-keyed variant used by app.NewClient.
-// The sqlite database always lives under ~/.tm/projects/<sanitized-key>/tm.db.
-// The key is the discovered project_root when set (so subdirectories of an
-// initialized project share state), or cwd as a fallback.
 //
 // Options:
 //
-//	project_root absolute path to use as the project root key. Set by
-//	             DefaultConfig after walking up from cwd. Without it, cwd
-//	             is used as the key.
-//	db_path      explicit override for the database file path. When set,
-//	             project_root is ignored. Use ":memory:" for an ephemeral
-//	             in-memory store. Useful for tests.
+//	db_path  path to the instance's database file, as resolved from
+//	         ~/.tm/config.yaml. ":memory:" gives an ephemeral store, which
+//	         is what tests use.
 func NewBackendFromOptions(opts map[string]string) (client.Backend, error) {
-	if dbPath := opts["db_path"]; dbPath != "" {
-		return NewBackend(dbPath)
+	dbPath := opts["db_path"]
+	if dbPath == "" {
+		return nil, fmt.Errorf("sqlite: no db_path configured; run 'tm init' to create an instance")
 	}
-	dir, err := scope.HomeProjectDir(opts["project_root"])
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create sqlite dir: %w", err)
-	}
-	return NewBackend(filepath.Join(dir, dbFilename))
+	return NewBackend(dbPath)
+}
+
+// Close releases the underlying connection. Commands are short-lived so this
+// is mostly for tests and the migrate command, which opens many databases.
+func (b *backend) Close() error {
+	return b.db.Close()
+}
+
+func (b *backend) Projects() client.ProjectsRepository {
+	return b.projects
 }
 
 func (b *backend) Tasks() client.TasksRepository {
 	return b.tasks
+}
+
+func (b *backend) Descriptions() client.DescriptionsRepository {
+	return b.descriptions
 }
 
 func (b *backend) Comments() client.CommentsRepository {

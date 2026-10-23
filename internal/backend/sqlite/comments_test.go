@@ -1,11 +1,7 @@
 package sqlite
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/sn3d/tm/internal/client"
 )
@@ -14,29 +10,17 @@ func makeComment(who, body string) client.Comment {
 	return client.Comment{Who: who, Comment: body}
 }
 
-func newTempBackend(t *testing.T) client.Backend {
-	t.Helper()
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
-
-	b, err := NewBackend(dbPath)
-	if err != nil {
-		t.Fatalf("NewBackend: %v", err)
-	}
-	return b
-}
-
 func TestCommentsRepository_Add(t *testing.T) {
 	// Arrange
 	b := newTempBackend(t)
-	task := client.Task{ID: "task-1", Subject: "with comments"}
-	if err := b.Tasks().Save(&task); err != nil {
+	task := client.Task{ID: ref("task-1"), Subject: "with comments"}
+	if err := b.Tasks().Save(testProject, &task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 	c := makeComment("alice", "looks good")
 
 	// Act
-	err := b.Comments().Add("task-1", &c)
+	err := b.Comments().Add(ref("task-1"), &c)
 
 	// Assert
 	if err != nil {
@@ -45,7 +29,7 @@ func TestCommentsRepository_Add(t *testing.T) {
 	if c.ID == "" {
 		t.Fatal("expected Add to assign a non-empty ID")
 	}
-	got, err := b.Comments().GetForTask("task-1")
+	got, err := b.Comments().GetForTask(ref("task-1"))
 	if err != nil {
 		t.Fatalf("GetForTask: %v", err)
 	}
@@ -57,12 +41,12 @@ func TestCommentsRepository_Add(t *testing.T) {
 func TestCommentsRepository_GetForTask(t *testing.T) {
 	// Arrange
 	b := newTempBackend(t)
-	task1 := client.Task{ID: "task-1", Subject: "t1"}
-	task2 := client.Task{ID: "task-2", Subject: "t2"}
-	if err := b.Tasks().Save(&task1); err != nil {
+	task1 := client.Task{ID: ref("task-1"), Subject: "t1"}
+	task2 := client.Task{ID: ref("task-2"), Subject: "t2"}
+	if err := b.Tasks().Save(testProject, &task1); err != nil {
 		t.Fatalf("seed task 1: %v", err)
 	}
-	if err := b.Tasks().Save(&task2); err != nil {
+	if err := b.Tasks().Save(testProject, &task2); err != nil {
 		t.Fatalf("seed task 2: %v", err)
 	}
 	seed := []client.Comment{
@@ -71,17 +55,17 @@ func TestCommentsRepository_GetForTask(t *testing.T) {
 		makeComment("alice", "third"),
 	}
 	for i := range seed {
-		if err := b.Comments().Add("task-1", &seed[i]); err != nil {
+		if err := b.Comments().Add(ref("task-1"), &seed[i]); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
 	}
 	other := makeComment("carol", "other task")
-	if err := b.Comments().Add("task-2", &other); err != nil {
+	if err := b.Comments().Add(ref("task-2"), &other); err != nil {
 		t.Fatalf("Add (other task): %v", err)
 	}
 
 	// Act
-	got, err := b.Comments().GetForTask("task-1")
+	got, err := b.Comments().GetForTask(ref("task-1"))
 
 	// Assert
 	if err != nil {
@@ -100,13 +84,13 @@ func TestCommentsRepository_GetForTask(t *testing.T) {
 func TestCommentsRepository_GetForTask_Empty(t *testing.T) {
 	// Arrange
 	b := newTempBackend(t)
-	task := client.Task{ID: "task-1", Subject: "no comments"}
-	if err := b.Tasks().Save(&task); err != nil {
+	task := client.Task{ID: ref("task-1"), Subject: "no comments"}
+	if err := b.Tasks().Save(testProject, &task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 
 	// Act
-	got, err := b.Comments().GetForTask("task-1")
+	got, err := b.Comments().GetForTask(ref("task-1"))
 
 	// Assert
 	if err != nil {
@@ -126,7 +110,7 @@ func TestCommentsRepository_Add_NonexistentTask(t *testing.T) {
 	c := makeComment("alice", "orphan")
 
 	// Act
-	err := b.Comments().Add("missing-task", &c)
+	err := b.Comments().Add(ref("missing-task"), &c)
 
 	// Assert
 	if err == nil {
@@ -137,12 +121,12 @@ func TestCommentsRepository_Add_NonexistentTask(t *testing.T) {
 func TestCommentsRepository_CascadeOnTaskDelete(t *testing.T) {
 	// Arrange
 	b := newTempBackend(t)
-	task := client.Task{ID: "doomed-task", Subject: "doomed"}
-	if err := b.Tasks().Save(&task); err != nil {
+	task := client.Task{ID: ref("doomed-task"), Subject: "doomed"}
+	if err := b.Tasks().Save(testProject, &task); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 	c := makeComment("alice", "bye")
-	if err := b.Comments().Add("doomed-task", &c); err != nil {
+	if err := b.Comments().Add(ref("doomed-task"), &c); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -153,7 +137,7 @@ func TestCommentsRepository_CascadeOnTaskDelete(t *testing.T) {
 	}
 
 	// Assert
-	got, err := b.Comments().GetForTask("doomed-task")
+	got, err := b.Comments().GetForTask(ref("doomed-task"))
 	if err != nil {
 		t.Fatalf("GetForTask: %v", err)
 	}

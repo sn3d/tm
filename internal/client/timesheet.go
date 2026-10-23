@@ -49,7 +49,7 @@ func ViewTimesheetEntry(e TimesheetEntry) TimesheetEntryView {
 	return TimesheetEntryView{
 		Timestamp:   e.Timestamp.Format(time.RFC3339Nano),
 		Activity:    string(e.Activity),
-		TaskID:      e.TaskID,
+		TaskID:      e.TaskID.String(),
 		TaskSubject: e.TaskSubject,
 		Actor:       e.Actor,
 		Detail:      e.Detail,
@@ -111,21 +111,37 @@ func (c *Client) Timesheet(from, to time.Time, actor string) ([]TimesheetEntry, 
 	if !to.After(from) {
 		return nil, fmt.Errorf("timesheet: window end %s is not after start %s", to.Format(time.RFC3339), from.Format(time.RFC3339))
 	}
-	filter := EventFilter{
-		Actor: actor,
-		Kinds: []EventKind{EventTaskCreated, EventTaskStateChanged, EventTaskCommented},
+	project, err := c.requireProject()
+	if err != nil {
+		return nil, err
+	}
+	events, err := c.ListEvents(timesheetFilter(from, to, actor, project))
+	if err != nil {
+		return nil, err
+	}
+	return c.entriesFromEvents(events), nil
+}
+
+// timesheetFilter builds the shared event filter for the single-project and
+// cross-project timesheet paths, so the two cannot drift apart in which
+// kinds or bounds they ask for.
+func timesheetFilter(from, to time.Time, actor, project string) EventFilter {
+	return EventFilter{
+		Project: project,
+		Actor:   actor,
+		Kinds:   []EventKind{EventTaskCreated, EventTaskStateChanged, EventTaskCommented},
 		// Since is an exclusive lower bound, so nudge back by 1ns to keep an
 		// event landing exactly on the window start (e.g. Monday 00:00:00).
 		Since: from.Add(-time.Nanosecond),
 		Until: to,
 	}
-	events, err := c.ListEvents(filter)
-	if err != nil {
-		return nil, err
-	}
+}
 
-	// ListEvents returns newest-first; flip to oldest-first so the log reads
-	// chronologically (same idiom as cmd/journal/list.go).
+// entriesFromEvents maps a newest-first event slice into oldest-first
+// timesheet entries, resolving task subjects and comment bodies.
+func (c *Client) entriesFromEvents(events []Event) []TimesheetEntry {
+	// Repositories return newest-first; flip to oldest-first so the log
+	// reads chronologically (same idiom as cmd/journal/list.go).
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
@@ -141,7 +157,7 @@ func (c *Client) Timesheet(from, to time.Time, actor string) ([]TimesheetEntry, 
 		}
 		out = append(out, entry)
 	}
-	return out, nil
+	return out
 }
 
 // eventToEntry maps a single journal event to a timesheet entry. It returns

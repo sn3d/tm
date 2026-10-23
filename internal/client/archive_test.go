@@ -15,17 +15,17 @@ func (b *stubBackend) seedTask(t Task) {
 
 func TestArchiveTask_SetsArchivedAtAndEmitsEvent(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "T-1", State: TaskStateTodo})
-	c := New(b)
+	b.seedTask(Task{ID: ref("T-1"), State: TaskStateTodo})
+	c := New(b, WithProject(testProject))
 
-	cascaded, err := c.ArchiveTask("T-1", true)
+	cascaded, err := c.ArchiveTask(ref("T-1"), true)
 	if err != nil {
 		t.Fatalf("ArchiveTask: %v", err)
 	}
 	if cascaded != 0 {
 		t.Errorf("cascade_count: got %d, want 0 (no children)", cascaded)
 	}
-	stored, _ := b.tasks.GetByID("T-1")
+	stored, _ := b.tasks.GetByID(ref("T-1"))
 	if stored.ArchivedAt == nil {
 		t.Error("ArchivedAt should be non-nil after archive")
 	}
@@ -38,7 +38,7 @@ func TestArchiveTask_SetsArchivedAtAndEmitsEvent(t *testing.T) {
 	if archEvent == nil {
 		t.Fatal("expected EventTaskArchived")
 	}
-	if archEvent.TaskID != "T-1" {
+	if archEvent.TaskID != ref("T-1") {
 		t.Errorf("event TaskID: got %q, want T-1", archEvent.TaskID)
 	}
 	if archEvent.Payload["cascade_count"].(int) != 0 {
@@ -52,26 +52,26 @@ func TestArchiveTask_SetsArchivedAtAndEmitsEvent(t *testing.T) {
 func TestArchiveTask_CascadeArchivesDescendants(t *testing.T) {
 	b := newStubBackend()
 	// root → child → grandchild, plus an unrelated sibling-of-root that should NOT be archived.
-	b.seedTask(Task{ID: "root", State: TaskStateTodo})
-	b.seedTask(Task{ID: "child", State: TaskStateTodo, ParentID: "root"})
-	b.seedTask(Task{ID: "grand", State: TaskStateTodo, ParentID: "child"})
-	b.seedTask(Task{ID: "unrelated", State: TaskStateTodo})
-	c := New(b)
+	b.seedTask(Task{ID: ref("root"), State: TaskStateTodo})
+	b.seedTask(Task{ID: ref("child"), State: TaskStateTodo, ParentID: ref("root")})
+	b.seedTask(Task{ID: ref("grand"), State: TaskStateTodo, ParentID: ref("child")})
+	b.seedTask(Task{ID: ref("unrelated"), State: TaskStateTodo})
+	c := New(b, WithProject(testProject))
 
-	cascaded, err := c.ArchiveTask("root", true)
+	cascaded, err := c.ArchiveTask(ref("root"), true)
 	if err != nil {
 		t.Fatalf("ArchiveTask: %v", err)
 	}
 	if cascaded != 2 {
 		t.Errorf("cascade_count: got %d, want 2 (child + grand)", cascaded)
 	}
-	for _, id := range []TaskID{"root", "child", "grand"} {
+	for _, id := range []TaskID{ref("root"), ref("child"), ref("grand")} {
 		got, _ := b.tasks.GetByID(id)
 		if got.ArchivedAt == nil {
 			t.Errorf("task %q should be archived", id)
 		}
 	}
-	unrelated, _ := b.tasks.GetByID("unrelated")
+	unrelated, _ := b.tasks.GetByID(ref("unrelated"))
 	if unrelated.ArchivedAt != nil {
 		t.Errorf("unrelated task should NOT be archived")
 	}
@@ -79,22 +79,22 @@ func TestArchiveTask_CascadeArchivesDescendants(t *testing.T) {
 
 func TestArchiveTask_NoCascade(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "root"})
-	b.seedTask(Task{ID: "child", ParentID: "root"})
-	c := New(b)
+	b.seedTask(Task{ID: ref("root")})
+	b.seedTask(Task{ID: ref("child"), ParentID: ref("root")})
+	c := New(b, WithProject(testProject))
 
-	cascaded, err := c.ArchiveTask("root", false)
+	cascaded, err := c.ArchiveTask(ref("root"), false)
 	if err != nil {
 		t.Fatalf("ArchiveTask: %v", err)
 	}
 	if cascaded != 0 {
 		t.Errorf("cascade_count: got %d, want 0 (cascade=false)", cascaded)
 	}
-	root, _ := b.tasks.GetByID("root")
+	root, _ := b.tasks.GetByID(ref("root"))
 	if root.ArchivedAt == nil {
 		t.Error("root should be archived")
 	}
-	child, _ := b.tasks.GetByID("child")
+	child, _ := b.tasks.GetByID(ref("child"))
 	if child.ArchivedAt != nil {
 		t.Error("child should NOT be archived with cascade=false")
 	}
@@ -102,14 +102,14 @@ func TestArchiveTask_NoCascade(t *testing.T) {
 
 func TestArchiveTask_AlreadyArchivedIsNoop(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "T-1"})
-	c := New(b)
+	b.seedTask(Task{ID: ref("T-1")})
+	c := New(b, WithProject(testProject))
 
-	if _, err := c.ArchiveTask("T-1", false); err != nil {
+	if _, err := c.ArchiveTask(ref("T-1"), false); err != nil {
 		t.Fatalf("first archive: %v", err)
 	}
 	eventsBefore := len(b.events.appended)
-	if _, err := c.ArchiveTask("T-1", false); err != nil {
+	if _, err := c.ArchiveTask(ref("T-1"), false); err != nil {
 		t.Fatalf("second archive: %v", err)
 	}
 	if len(b.events.appended) != eventsBefore {
@@ -120,22 +120,22 @@ func TestArchiveTask_AlreadyArchivedIsNoop(t *testing.T) {
 
 func TestUnarchiveTask_ClearsArchivedAtAndEmitsEvent(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "T-1"})
-	c := New(b)
+	b.seedTask(Task{ID: ref("T-1")})
+	c := New(b, WithProject(testProject))
 
-	if _, err := c.ArchiveTask("T-1", false); err != nil {
+	if _, err := c.ArchiveTask(ref("T-1"), false); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if err := c.UnarchiveTask("T-1"); err != nil {
+	if err := c.UnarchiveTask(ref("T-1")); err != nil {
 		t.Fatalf("UnarchiveTask: %v", err)
 	}
-	got, _ := b.tasks.GetByID("T-1")
+	got, _ := b.tasks.GetByID(ref("T-1"))
 	if got.ArchivedAt != nil {
 		t.Error("ArchivedAt should be nil after unarchive")
 	}
 	var found bool
 	for _, ev := range b.events.appended {
-		if ev.Kind == EventTaskUnarchived && ev.TaskID == "T-1" {
+		if ev.Kind == EventTaskUnarchived && ev.TaskID == ref("T-1") {
 			found = true
 			break
 		}
@@ -147,17 +147,17 @@ func TestUnarchiveTask_ClearsArchivedAtAndEmitsEvent(t *testing.T) {
 
 func TestUnarchiveTask_DoesNotCascade(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "root"})
-	b.seedTask(Task{ID: "child", ParentID: "root"})
-	c := New(b)
+	b.seedTask(Task{ID: ref("root")})
+	b.seedTask(Task{ID: ref("child"), ParentID: ref("root")})
+	c := New(b, WithProject(testProject))
 
-	if _, err := c.ArchiveTask("root", true); err != nil {
+	if _, err := c.ArchiveTask(ref("root"), true); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if err := c.UnarchiveTask("root"); err != nil {
+	if err := c.UnarchiveTask(ref("root")); err != nil {
 		t.Fatalf("unarchive root: %v", err)
 	}
-	child, _ := b.tasks.GetByID("child")
+	child, _ := b.tasks.GetByID(ref("child"))
 	if child.ArchivedAt == nil {
 		t.Error("child should remain archived (unarchive must not cascade)")
 	}
@@ -165,10 +165,10 @@ func TestUnarchiveTask_DoesNotCascade(t *testing.T) {
 
 func TestUnarchiveTask_NotArchivedIsNoop(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "T-1"})
-	c := New(b)
+	b.seedTask(Task{ID: ref("T-1")})
+	c := New(b, WithProject(testProject))
 
-	if err := c.UnarchiveTask("T-1"); err != nil {
+	if err := c.UnarchiveTask(ref("T-1")); err != nil {
 		t.Fatalf("UnarchiveTask: %v", err)
 	}
 	if len(b.events.appended) != 0 {
@@ -177,8 +177,8 @@ func TestUnarchiveTask_NotArchivedIsNoop(t *testing.T) {
 }
 
 func TestArchiveTask_NotFound(t *testing.T) {
-	c := New(newStubBackend())
-	_, err := c.ArchiveTask("missing", false)
+	c := New(newStubBackend(), WithProject(testProject))
+	_, err := c.ArchiveTask(ref("missing"), false)
 	var nfe *NotFoundError
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected NotFoundError, got %v", err)
@@ -186,8 +186,8 @@ func TestArchiveTask_NotFound(t *testing.T) {
 }
 
 func TestUnarchiveTask_NotFound(t *testing.T) {
-	c := New(newStubBackend())
-	err := c.UnarchiveTask("missing")
+	c := New(newStubBackend(), WithProject(testProject))
+	err := c.UnarchiveTask(ref("missing"))
 	var nfe *NotFoundError
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected NotFoundError, got %v", err)
@@ -196,10 +196,10 @@ func TestUnarchiveTask_NotFound(t *testing.T) {
 
 func TestListTasks_ArchivedFilter(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "A", State: TaskStateTodo})
-	b.seedTask(Task{ID: "B", State: TaskStateTodo})
-	c := New(b)
-	if _, err := c.ArchiveTask("B", false); err != nil {
+	b.seedTask(Task{ID: ref("A"), State: TaskStateTodo})
+	b.seedTask(Task{ID: ref("B"), State: TaskStateTodo})
+	c := New(b, WithProject(testProject))
+	if _, err := c.ArchiveTask(ref("B"), false); err != nil {
 		t.Fatalf("archive B: %v", err)
 	}
 
@@ -228,22 +228,22 @@ func TestListTasks_ArchivedFilter(t *testing.T) {
 
 func TestGetTasksByParent_ArchivedFilter(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "root"})
-	b.seedTask(Task{ID: "A", ParentID: "root"})
-	b.seedTask(Task{ID: "B", ParentID: "root"})
-	c := New(b)
-	if _, err := c.ArchiveTask("A", false); err != nil {
+	b.seedTask(Task{ID: ref("root")})
+	b.seedTask(Task{ID: ref("A"), ParentID: ref("root")})
+	b.seedTask(Task{ID: ref("B"), ParentID: ref("root")})
+	c := New(b, WithProject(testProject))
+	if _, err := c.ArchiveTask(ref("A"), false); err != nil {
 		t.Fatalf("archive A: %v", err)
 	}
 
-	active, err := c.GetTasksByParent("root", ArchivedActive)
+	active, err := c.GetTasksByParent(ref("root"), ArchivedActive)
 	if err != nil {
 		t.Fatalf("active: %v", err)
 	}
-	if len(active) != 1 || active[0].ID != "B" {
+	if len(active) != 1 || active[0].ID != ref("B") {
 		t.Errorf("active under root: got %+v, want [B]", taskIDs(active))
 	}
-	all, err := c.GetTasksByParent("root", ArchivedAll)
+	all, err := c.GetTasksByParent(ref("root"), ArchivedAll)
 	if err != nil {
 		t.Fatalf("all: %v", err)
 	}
@@ -254,10 +254,10 @@ func TestGetTasksByParent_ArchivedFilter(t *testing.T) {
 
 func TestGetTasksByLabel_ArchivedFilter(t *testing.T) {
 	b := newStubBackend()
-	b.seedTask(Task{ID: "A", Labels: []string{"bug"}})
-	b.seedTask(Task{ID: "B", Labels: []string{"bug"}})
-	c := New(b)
-	if _, err := c.ArchiveTask("A", false); err != nil {
+	b.seedTask(Task{ID: ref("A"), Labels: []string{"bug"}})
+	b.seedTask(Task{ID: ref("B"), Labels: []string{"bug"}})
+	c := New(b, WithProject(testProject))
+	if _, err := c.ArchiveTask(ref("A"), false); err != nil {
 		t.Fatalf("archive A: %v", err)
 	}
 
@@ -265,14 +265,14 @@ func TestGetTasksByLabel_ArchivedFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("active: %v", err)
 	}
-	if len(active) != 1 || active[0].ID != "B" {
+	if len(active) != 1 || active[0].ID != ref("B") {
 		t.Errorf("active bug-labeled: got %+v, want [B]", taskIDs(active))
 	}
 	only, err := c.GetTasksByLabel("bug", ArchivedOnly)
 	if err != nil {
 		t.Fatalf("only: %v", err)
 	}
-	if len(only) != 1 || only[0].ID != "A" {
+	if len(only) != 1 || only[0].ID != ref("A") {
 		t.Errorf("only archived bug-labeled: got %+v, want [A]", taskIDs(only))
 	}
 }

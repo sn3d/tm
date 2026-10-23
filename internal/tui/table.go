@@ -7,7 +7,12 @@ import (
 )
 
 const (
-	ColIDWidth      = 10
+	// ColIDWidth must fit a qualified reference, "TICKER/#id". A ticker is
+	// up to 15 characters, plus "/#" and the number, so the column is wider
+	// than it was when IDs were bare numbers. PadRight does not truncate, so
+	// a column that is too narrow runs into the next one rather than
+	// clipping — which is why this is sized generously.
+	ColIDWidth      = 22
 	ColSubjectWidth = 62
 	ColStateWidth   = 16
 	ColAgentWidth   = 18

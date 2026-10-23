@@ -480,7 +480,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "H":
 		return m.moveDetail(-1)
 	case "a":
-		if m.archive == nil || m.detail.Task.ID == "" {
+		if m.archive == nil || m.detail.Task.ID.IsZero() {
 			return m, nil
 		}
 		return m, archiveCmd(m.archive, m.detail.Task.ID)
@@ -516,7 +516,7 @@ func (m Model) updateCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // the board's selection cursor.
 func (m Model) moveDetail(dir int) (tea.Model, tea.Cmd) {
 	t := m.detail.Task
-	if t.ID == "" {
+	if t.ID.IsZero() {
 		return m, nil
 	}
 	// Find which column the current state belongs to.

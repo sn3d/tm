@@ -25,9 +25,13 @@ var GetCmd = &cli.Command{
 			return err
 		}
 
-		id := command.Args().First()
-		if id == "" {
-			return fmt.Errorf("task ID is required, e.g. `tm get 123`")
+		arg := command.Args().First()
+		if arg == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm get 123` or `tm get TM/#123`")
+		}
+		id, err := c.ParseRef(arg)
+		if err != nil {
+			return err
 		}
 		t, err := c.GetTask(id)
 		if err != nil {
@@ -42,19 +46,20 @@ var GetCmd = &cli.Command{
 		dim := color.HiBlackString
 		resolver := tui.NewResolver(cfg.Styling)
 
-		fmt.Printf("%s: %s\n", bold(t.ID), t.Subject)
+		fmt.Printf("%s: %s\n", bold(displayRef(c, t.ID)), t.Subject)
 		fmt.Printf("   %s %s\n", dim("status:"), resolver.StateBadge(t.State))
 		if t.ArchivedAt != nil {
 			fmt.Printf("   %s %s\n", dim("archived:"),
 				color.YellowString("since %s", t.ArchivedAt.Format(time.RFC3339Nano)))
 		}
 		fmt.Printf("   %s %s\n", dim("agent:"), tui.Dash(t.AssignedAgent))
-		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(t.ParentID))
+		fmt.Printf("   %s %s\n", dim("parent:"), tui.Dash(displayRef(c, t.ParentID)))
 		if len(t.Labels) > 0 {
 			fmt.Printf("   %s %s\n", dim("labels:"), resolver.LabelsBadge(t.Labels))
 		}
 		if len(t.DependsOn) > 0 {
-			fmt.Printf("   %s %s\n", dim("depends on:"), strings.Join(t.DependsOn, ", "))
+			fmt.Printf("   %s %s\n", dim("depends on:"),
+				strings.Join(client.FormatTaskRefs(t.DependsOn), ", "))
 		}
 
 		fmt.Println()

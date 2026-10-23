@@ -16,6 +16,25 @@ func joinTaskStates() string {
 	return strings.Join(parts, " | ")
 }
 
+// projectFlag is the optional `project` argument every task tool accepts.
+//
+// OPTIONAL by design: when absent or empty the tool acts on the current
+// project — the folder mapping the server was started under — so an agent
+// that never passes it behaves exactly as it did before projects existed.
+// Passing a ticker reaches another project in the SAME instance.
+func projectFlag() mcp.ToolOption {
+	return mcp.WithString("project", mcp.Description(
+		"Project ticker to act on (e.g. \"TM\", \"BILL\"). OPTIONAL — omit to use the current project "+
+			"(the folder this server was started in). Case-insensitive. Use project_list to discover tickers."))
+}
+
+// allProjectsFlag is the cross-project switch on the read-only views.
+func allProjectsFlag(what string) mcp.ToolOption {
+	return mcp.WithBoolean("all_projects", mcp.Description(
+		"If true, "+what+" across every project in this instance instead of just the current one. "+
+			"Cannot be combined with `project`."))
+}
+
 const serverName = "tm"
 const serverVersion = "0.1.0"
 
@@ -69,6 +88,7 @@ Labels are free-form strings, exact-match, no validation. Pick what your team us
 				mcp.Items(map[string]any{"type": "string"}),
 			),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+			projectFlag(),
 		),
 		s.handleTaskCreate,
 	)
@@ -107,6 +127,7 @@ Typical handoffs:
 				mcp.Items(map[string]any{"type": "string"}),
 			),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal events. Overrides the server-wide default for this call only.")),
+			projectFlag(),
 		),
 		s.handleTaskEdit,
 	)
@@ -125,6 +146,7 @@ Common patterns:
 			mcp.WithString("parent_id", mcp.Description(`Filter tasks by parent ID. Pass empty string for top-level tasks only. Omit to ignore.`)),
 			mcp.WithString("label", mcp.Description(`Filter to tasks whose labels contain this string (exact match). E.g. label="plan", label="bug", label="task". Omit to ignore.`)),
 			mcp.WithString("archived", mcp.Description(`Filter by archive state. "active" (default) hides archived tasks; "archived" shows only archived; "all" includes both.`)),
+			projectFlag(),
 		),
 		s.handleTaskList,
 	)
@@ -139,6 +161,7 @@ Archive is a visibility signal independent of state — an archived task keeps i
 			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
 			mcp.WithBoolean("cascade", mcp.Description("If true (default) archive all descendants too. Pass false to archive only the named task.")),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+			projectFlag(),
 		),
 		s.handleTaskArchive,
 	)
@@ -150,6 +173,7 @@ Archive is a visibility signal independent of state — an archived task keeps i
 Intentionally does NOT cascade. Descendants stay archived; call task_unarchive on each one you want back. This prevents accidentally un-hiding a whole tree.`),
 			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+			projectFlag(),
 		),
 		s.handleTaskUnarchive,
 	)
@@ -158,6 +182,7 @@ Intentionally does NOT cascade. Descendants stay archived; call task_unarchive o
 		mcp.NewTool("task_get",
 			mcp.WithDescription("Get a single task by ID."),
 			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
+			projectFlag(),
 		),
 		s.handleTaskGet,
 	)
@@ -166,6 +191,7 @@ Intentionally does NOT cascade. Descendants stay archived; call task_unarchive o
 		mcp.NewTool("task_get_comments",
 			mcp.WithDescription("Get all comments attached to a task."),
 			mcp.WithString("id", mcp.Description("Task ID."), mcp.Required()),
+			projectFlag(),
 		),
 		s.handleTaskGetComments,
 	)
@@ -177,6 +203,7 @@ Intentionally does NOT cascade. Descendants stay archived; call task_unarchive o
 			mcp.WithString("who", mcp.Description("Author of the comment."), mcp.Required()),
 			mcp.WithString("comment", mcp.Description("Comment body. Markdown is supported."), mcp.Required()),
 			mcp.WithString("actor", mcp.Description("Identity to record on the journal event. Overrides the server-wide default for this call only.")),
+			projectFlag(),
 		),
 		s.handleTaskAddComment,
 	)
@@ -195,6 +222,8 @@ Handoff model: things appear here when someone changes a task's state AND reassi
 			mcp.WithString("actor", mcp.Description("Inbox owner. Defaults to the server-wide actor.")),
 			mcp.WithBoolean("peek", mcp.Description("If true, do not advance the last-seen cursor. Use when looking without committing to having processed the items — the next non-peek call will still surface them.")),
 			mcp.WithNumber("limit", mcp.Description("Max recent_changes to return (0 = no limit). Default 50. Does not affect tasks/resumable.")),
+			projectFlag(),
+			allProjectsFlag("return one inbox per project"),
 		),
 		s.handleInbox,
 	)
@@ -210,6 +239,8 @@ Handoff model: things appear here when someone changes a task's state AND reassi
 			),
 			mcp.WithString("since", mcp.Description("Only events strictly after this RFC3339 timestamp.")),
 			mcp.WithNumber("limit", mcp.Description("Max events to return (0 = no limit). Default 50.")),
+			projectFlag(),
+			allProjectsFlag("list events"),
 		),
 		s.handleJournalList,
 	)
@@ -221,7 +252,28 @@ Handoff model: things appear here when someone changes a task's state AND reassi
 			mcp.WithString("until", mcp.Description("End of the window, exclusive (RFC3339). Omit to use the current week.")),
 			mcp.WithBoolean("last_week", mcp.Description("Use the previous Mon-Sun week instead of the current one. Ignored if since/until are given.")),
 			mcp.WithString("actor", mcp.Description("Filter to one actor. Omit for all actors (recommended for a single-customer instance).")),
+			projectFlag(),
+			allProjectsFlag("report activity"),
 		),
 		s.handleTimesheet,
+	)
+
+	s.mcp.AddTool(
+		mcp.NewTool("project_list",
+			mcp.WithDescription(`List the projects in this TM instance.
+
+Call this when you do not know which tickers exist. Every task tool takes an
+optional `+"`project`"+` argument naming one of these tickers; omit that argument
+to act on the current project (the folder the server was started in), which is
+reported as `+"`default_project`"+` in the response.
+
+Task IDs everywhere in this API use the qualified TICKER/#id form (e.g.
+"TM/#42"). A bare number is accepted on input and resolves against the call's
+project, but responses are always qualified so you cannot accidentally address
+the wrong project.`),
+			mcp.WithBoolean("include_archived", mcp.Description(
+				"If true, include archived projects. Archived projects are hidden by default.")),
+		),
+		s.handleProjectList,
 	)
 }

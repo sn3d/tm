@@ -30,10 +30,20 @@ func (er *eventsRepository) Append(e *client.Event) error {
 	if err != nil {
 		return fmt.Errorf("marshal event payload: %w", err)
 	}
-	const q = `INSERT INTO events (id, ts, actor, kind, task_id, payload) VALUES (?, ?, ?, ?, ?, ?)`
-	if _, err := er.db.Exec(q, e.ID, e.Timestamp.Format(time.RFC3339Nano), e.Actor, string(e.Kind), e.TaskID, string(raw)); err != nil {
+	// project_id is stored separately from the task reference so the journal
+	// survives project deletion (it is deliberately not a foreign key), and
+	// so cross-project queries can filter without parsing task_id.
+	project := e.Project
+	if project == "" && !e.TaskID.IsZero() {
+		project = e.TaskID.Project
+	}
+	const q = `INSERT INTO events (id, ts, actor, kind, project_id, task_id, payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	if _, err := er.db.Exec(q, e.ID, e.Timestamp.Format(time.RFC3339Nano), e.Actor,
+		string(e.Kind), project, e.TaskID.ID, string(raw)); err != nil {
 		return fmt.Errorf("insert event %q: %w", e.ID, err)
 	}
+	e.Project = project
 	return nil
 }
 
@@ -42,9 +52,22 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 		conds []string
 		args  []any
 	)
-	if filter.TaskID != "" {
+	// An explicit project narrows to one journal; an empty Project means
+	// "every project in this instance", which is what JournalAll wants.
+	if filter.Project != "" {
+		conds = append(conds, "project_id = ?")
+		args = append(args, filter.Project)
+	}
+	if !filter.TaskID.IsZero() {
 		conds = append(conds, "task_id = ?")
-		args = append(args, filter.TaskID)
+		args = append(args, filter.TaskID.ID)
+		// A task reference also pins the project, even when the caller did
+		// not set Project — without this, bare ids would collide across
+		// projects that both number a task 42.
+		if filter.Project == "" && filter.TaskID.Project != "" {
+			conds = append(conds, "project_id = ?")
+			args = append(args, filter.TaskID.Project)
+		}
 	}
 	if filter.Actor != "" {
 		conds = append(conds, "actor = ?")
@@ -70,7 +93,7 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 		args = append(args, filter.Until.UTC().Format(time.RFC3339Nano))
 	}
 
-	q := "SELECT id, ts, actor, kind, task_id, payload FROM events"
+	q := "SELECT id, ts, actor, kind, project_id, task_id, payload FROM events"
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -88,13 +111,19 @@ func (er *eventsRepository) List(filter client.EventFilter) ([]client.Event, err
 	out := make([]client.Event, 0)
 	for rows.Next() {
 		var (
-			e       client.Event
-			tsStr   string
-			kindStr string
-			raw     string
+			e         client.Event
+			tsStr     string
+			kindStr   string
+			projectID string
+			bareTask  string
+			raw       string
 		)
-		if err := rows.Scan(&e.ID, &tsStr, &e.Actor, &kindStr, &e.TaskID, &raw); err != nil {
+		if err := rows.Scan(&e.ID, &tsStr, &e.Actor, &kindStr, &projectID, &bareTask, &raw); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
+		}
+		e.Project = projectID
+		if bareTask != "" {
+			e.TaskID = client.TaskRef{Project: projectID, ID: bareTask}
 		}
 		ts, err := time.Parse(time.RFC3339Nano, tsStr)
 		if err != nil {

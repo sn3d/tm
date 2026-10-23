@@ -61,8 +61,8 @@ var CreateCmd = &cli.Command{
 		subject := command.String("subject")
 		description := command.String("description")
 		assigned := command.String("assigned")
-		dependsOn := parseDependsOn(command.String("depends-on"))
-		parent := command.String("parent")
+		dependsOnRaw := parseCommaList(command.String("depends-on"))
+		parentRaw := command.String("parent")
 		labels := parseLabels(command.String("labels"))
 		mode, err := client.ParseTaskMode(command.String("mode"))
 		if err != nil {
@@ -74,8 +74,8 @@ var CreateCmd = &cli.Command{
 				Subject:     subject,
 				Description: description,
 				Assigned:    assigned,
-				DependsOn:   dependsOn,
-				Parent:      parent,
+				DependsOn:   dependsOnRaw,
+				Parent:      parentRaw,
 				Labels:      labels,
 				Mode:        string(mode),
 			})
@@ -91,13 +91,24 @@ var CreateCmd = &cli.Command{
 			subject = draft.Subject
 			description = draft.Description
 			assigned = draft.Assigned
-			dependsOn = draft.DependsOn
-			parent = draft.Parent
+			dependsOnRaw = draft.DependsOn
+			parentRaw = draft.Parent
 			labels = draft.Labels
 			mode, err = client.ParseTaskMode(draft.Mode)
 			if err != nil {
 				return err
 			}
+		}
+
+		// References are parsed against the resolved project, so a bare "7"
+		// means "task 7 here" while "BILL/#7" is rejected as cross-project.
+		dependsOn, err := c.ParseRefs(dependsOnRaw)
+		if err != nil {
+			return err
+		}
+		parent, err := c.ParseRef(parentRaw)
+		if err != nil {
+			return err
 		}
 
 		id, err := c.CreateTask(client.CreateTaskInput{
@@ -112,16 +123,10 @@ var CreateCmd = &cli.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s Created task %s\n", color.GreenString("✓"), color.New(color.Bold).Sprint(id))
+		fmt.Printf("%s Created task %s\n", color.GreenString("✓"),
+			color.New(color.Bold).Sprint(displayRef(c, id)))
 		return nil
 	},
-}
-
-// parseDependsOn splits the --depends-on flag value into a slice of task IDs,
-// trimming whitespace and dropping empty entries. Returns nil for an empty
-// string so the resulting task has no dependency list at all.
-func parseDependsOn(raw string) []client.TaskID {
-	return parseCommaList(raw)
 }
 
 // parseLabels splits the --labels flag value into a slice, sharing the same

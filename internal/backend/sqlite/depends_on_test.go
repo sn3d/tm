@@ -10,11 +10,11 @@ func TestTasksRepository_DependsOn_RoundTrip(t *testing.T) {
 	repo := newTempRepo(t)
 
 	dep1 := client.Task{Subject: "d1", State: client.TaskStateTodo}
-	if err := repo.Save(&dep1); err != nil {
+	if err := repo.Save(testProject, &dep1); err != nil {
 		t.Fatalf("seed dep1: %v", err)
 	}
 	dep2 := client.Task{Subject: "d2", State: client.TaskStateTodo}
-	if err := repo.Save(&dep2); err != nil {
+	if err := repo.Save(testProject, &dep2); err != nil {
 		t.Fatalf("seed dep2: %v", err)
 	}
 
@@ -23,7 +23,7 @@ func TestTasksRepository_DependsOn_RoundTrip(t *testing.T) {
 		State:     client.TaskStateTodo,
 		DependsOn: []client.TaskID{dep1.ID, dep2.ID},
 	}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -45,22 +45,22 @@ func TestTasksRepository_DependsOn_RoundTrip(t *testing.T) {
 func TestTasksRepository_DependsOn_UpdateReplacesList(t *testing.T) {
 	repo := newTempRepo(t)
 	d1 := client.Task{Subject: "d1", State: client.TaskStateTodo}
-	_ = repo.Save(&d1)
+	_ = repo.Save(testProject, &d1)
 	d2 := client.Task{Subject: "d2", State: client.TaskStateTodo}
-	_ = repo.Save(&d2)
+	_ = repo.Save(testProject, &d2)
 	d3 := client.Task{Subject: "d3", State: client.TaskStateTodo}
-	_ = repo.Save(&d3)
+	_ = repo.Save(testProject, &d3)
 
 	task := client.Task{
 		Subject:   "t",
 		State:     client.TaskStateTodo,
 		DependsOn: []client.TaskID{d1.ID, d2.ID},
 	}
-	_ = repo.Save(&task)
+	_ = repo.Save(testProject, &task)
 
 	// Replace with a single different dep.
 	task.DependsOn = []client.TaskID{d3.ID}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save replace: %v", err)
 	}
 	got, _ := repo.GetByID(task.ID)
@@ -72,12 +72,12 @@ func TestTasksRepository_DependsOn_UpdateReplacesList(t *testing.T) {
 func TestTasksRepository_DependsOn_EmptyAfterClear(t *testing.T) {
 	repo := newTempRepo(t)
 	d1 := client.Task{Subject: "d1", State: client.TaskStateTodo}
-	_ = repo.Save(&d1)
+	_ = repo.Save(testProject, &d1)
 	task := client.Task{Subject: "t", State: client.TaskStateTodo, DependsOn: []client.TaskID{d1.ID}}
-	_ = repo.Save(&task)
+	_ = repo.Save(testProject, &task)
 
 	task.DependsOn = nil
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save clear: %v", err)
 	}
 	got, _ := repo.GetByID(task.ID)

@@ -10,6 +10,7 @@ import (
 
 type inboxView struct {
 	Actor         string      `json:"actor"`
+	Project       string      `json:"project,omitempty"`
 	Tasks         []taskView  `json:"tasks"`
 	Resumable     []taskView  `json:"resumable"`
 	RecentChanges []eventView `json:"recent_changes"`
@@ -35,6 +36,7 @@ func viewInbox(b *client.Inbox) inboxView {
 	}
 	return inboxView{
 		Actor:         b.Actor,
+		Project:       b.Project,
 		Tasks:         tasks,
 		Resumable:     resumable,
 		RecentChanges: changes,
@@ -48,10 +50,8 @@ func (s *Server) handleInbox(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 	// Default to the server-wide actor when none is supplied. Reaching into
 	// As("") would resolve to "system", which is almost never the caller's
 	// real inbox; using the configured actor matches the CLI's behavior.
-	c := s.c
 	actor := s.c.Actor()
 	if v, ok := args["actor"].(string); ok && v != "" {
-		c = s.c.As(v)
 		actor = v
 	}
 
@@ -65,10 +65,21 @@ func (s *Server) handleInbox(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		limit = int(v)
 	}
 
-	var (
-		box *client.Inbox
-		err error
-	)
+	allProjects, _ := args["all_projects"].(bool)
+	if allProjects {
+		if v, ok := args["project"].(string); ok && v != "" {
+			return mcp.NewToolResultError("pass either `project` or `all_projects`, not both"), nil
+		}
+		return s.handleInboxAll(actor, peek, limit)
+	}
+
+	c, err := s.clientFor(args)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("select project", err), nil
+	}
+	c = c.As(actor)
+
+	var box *client.Inbox
 	if peek {
 		box, err = c.PeekInbox(actor)
 	} else {
@@ -78,9 +89,42 @@ func (s *Server) handleInbox(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 		return mcp.NewToolResultErrorFromErr("inbox", err), nil
 	}
 
+	trimChanges(box, limit)
+	return mcp.NewToolResultJSON(viewInbox(box))
+}
+
+// handleInboxAll returns one inbox per project in the instance, each with its
+// own cursor — reading one project's section never marks another's work as
+// seen, which is why cursors are per (actor, project).
+func (s *Server) handleInboxAll(actor string, peek bool, limit int) (*mcp.CallToolResult, error) {
+	c := s.c.As(actor)
+	var (
+		boxes []*client.Inbox
+		err   error
+	)
+	if peek {
+		boxes, err = c.PeekInboxAll(actor)
+	} else {
+		boxes, err = c.InboxAll(actor)
+	}
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("inbox", err), nil
+	}
+	views := make([]inboxView, len(boxes))
+	for i, box := range boxes {
+		trimChanges(box, limit)
+		views[i] = viewInbox(box)
+	}
+	return mcp.NewToolResultJSON(map[string]any{
+		"actor":    actor,
+		"projects": views,
+	})
+}
+
+// trimChanges keeps the most recent `limit` changes, preserving the
+// oldest-first order of what remains.
+func trimChanges(box *client.Inbox, limit int) {
 	if limit > 0 && len(box.RecentChanges) > limit {
 		box.RecentChanges = box.RecentChanges[len(box.RecentChanges)-limit:]
 	}
-
-	return mcp.NewToolResultJSON(viewInbox(box))
 }

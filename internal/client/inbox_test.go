@@ -6,7 +6,7 @@ import (
 )
 
 func TestInbox_EmptyActorErrors(t *testing.T) {
-	c := New(newStubBackend())
+	c := New(newStubBackend(), WithProject(testProject))
 	if _, err := c.Inbox(""); err == nil {
 		t.Fatal("Inbox(\"\"): expected error, got nil")
 	}
@@ -30,16 +30,16 @@ func TestInbox_TasksFilteredByAssigneeAndCategory(t *testing.T) {
 		{"T-7", "bob", TaskStateTodo},
 		{"T-8", "", TaskStateTodo},
 	} {
-		b.tasks.store[ts.id] = &Task{ID: ts.id, AssignedAgent: ts.assignee, State: ts.state}
+		b.tasks.store[ref(ts.id)] = &Task{ID: ref(ts.id), AssignedAgent: ts.assignee, State: ts.state}
 	}
 
-	box, err := New(b).Inbox("alice")
+	box, err := New(b, WithProject(testProject)).Inbox("alice")
 	if err != nil {
 		t.Fatalf("Inbox: %v", err)
 	}
 	got := map[string]bool{}
 	for _, t := range box.Tasks {
-		got[t.ID] = true
+		got[t.ID.ID] = true
 	}
 	want := []string{"T-1", "T-2", "T-3", "T-4"}
 	for _, id := range want {
@@ -57,22 +57,22 @@ func TestInbox_TasksFilteredByAssigneeAndCategory(t *testing.T) {
 func TestInbox_ExcludesArchivedTasksRegardlessOfState(t *testing.T) {
 	b := newStubBackend()
 	when := time.Unix(2000, 0).UTC()
-	b.tasks.store["T-active"] = &Task{
-		ID: "T-active", AssignedAgent: "alice", State: TaskStateInProgress,
+	b.tasks.store[ref("T-active")] = &Task{
+		ID: ref("T-active"), AssignedAgent: "alice", State: TaskStateInProgress,
 	}
-	b.tasks.store["T-archived"] = &Task{
-		ID: "T-archived", AssignedAgent: "alice", State: TaskStateInProgress, ArchivedAt: &when,
+	b.tasks.store[ref("T-archived")] = &Task{
+		ID: ref("T-archived"), AssignedAgent: "alice", State: TaskStateInProgress, ArchivedAt: &when,
 	}
-	box, err := New(b).Inbox("alice")
+	box, err := New(b, WithProject(testProject)).Inbox("alice")
 	if err != nil {
 		t.Fatalf("Inbox: %v", err)
 	}
 	for _, tsk := range box.Tasks {
-		if tsk.ID == "T-archived" {
+		if tsk.ID == ref("T-archived") {
 			t.Errorf("archived task should be excluded from inbox")
 		}
 	}
-	if len(box.Tasks) != 1 || box.Tasks[0].ID != "T-active" {
+	if len(box.Tasks) != 1 || box.Tasks[0].ID.ID != "T-active" {
 		t.Errorf("expected only T-active, got %v", box.Tasks)
 	}
 }
@@ -81,53 +81,53 @@ func TestInbox_TasksSortedNewestFirstByUpdatedAt(t *testing.T) {
 	b := newStubBackend()
 	base := time.Unix(1000, 0).UTC()
 	for i, id := range []string{"T-1", "T-5", "T-3"} {
-		b.tasks.store[id] = &Task{
-			ID:            id,
+		b.tasks.store[ref(id)] = &Task{
+			ID:            ref(id),
 			AssignedAgent: "alice",
 			State:         TaskStateTodo,
 			UpdatedAt:     base.Add(time.Duration(i) * time.Second),
 		}
 	}
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if len(box.Tasks) != 3 {
 		t.Fatalf("want 3 tasks, got %d", len(box.Tasks))
 	}
-	if box.Tasks[0].ID != "T-3" || box.Tasks[1].ID != "T-5" || box.Tasks[2].ID != "T-1" {
+	if box.Tasks[0].ID.ID != "T-3" || box.Tasks[1].ID.ID != "T-5" || box.Tasks[2].ID.ID != "T-1" {
 		t.Errorf("sort order: got %v, want [T-3 T-5 T-1]",
-			[]string{box.Tasks[0].ID, box.Tasks[1].ID, box.Tasks[2].ID})
+			[]string{box.Tasks[0].ID.ID, box.Tasks[1].ID.ID, box.Tasks[2].ID.ID})
 	}
 }
 
 func TestInbox_ResumableIsTasksUpdatedSinceLastSeen(t *testing.T) {
 	b := newStubBackend()
 	cutoff := time.Unix(1000, 0).UTC()
-	b.cursors.store["alice"] = cutoff
+	b.cursors.store[cursorKey{"alice", testProject}] = cutoff
 
 	// Stale: updated before cutoff — assigned, active, but no news.
-	b.tasks.store["T-stale"] = &Task{
-		ID: "T-stale", AssignedAgent: "alice", State: TaskStateInProgress,
+	b.tasks.store[ref("T-stale")] = &Task{
+		ID: ref("T-stale"), AssignedAgent: "alice", State: TaskStateInProgress,
 		UpdatedAt: cutoff.Add(-time.Second),
 	}
 	// Fresh: updated after cutoff — should appear in Resumable.
-	b.tasks.store["T-fresh"] = &Task{
-		ID: "T-fresh", AssignedAgent: "alice", State: TaskStateBlocked,
+	b.tasks.store[ref("T-fresh")] = &Task{
+		ID: ref("T-fresh"), AssignedAgent: "alice", State: TaskStateBlocked,
 		UpdatedAt: cutoff.Add(time.Second),
 	}
 	// Not assigned to alice — must not appear even if fresh.
-	b.tasks.store["T-other"] = &Task{
-		ID: "T-other", AssignedAgent: "bob", State: TaskStateInProgress,
+	b.tasks.store[ref("T-other")] = &Task{
+		ID: ref("T-other"), AssignedAgent: "bob", State: TaskStateInProgress,
 		UpdatedAt: cutoff.Add(time.Second),
 	}
 
-	box, err := New(b).PeekInbox("alice")
+	box, err := New(b, WithProject(testProject)).PeekInbox("alice")
 	if err != nil {
 		t.Fatalf("PeekInbox: %v", err)
 	}
 	if len(box.Resumable) != 1 {
 		t.Fatalf("want 1 resumable, got %d (%v)", len(box.Resumable), box.Resumable)
 	}
-	if box.Resumable[0].ID != "T-fresh" {
-		t.Errorf("got resumable %q, want T-fresh", box.Resumable[0].ID)
+	if box.Resumable[0].ID.ID != "T-fresh" {
+		t.Errorf("got resumable %q, want T-fresh", box.Resumable[0].ID.ID)
 	}
 }
 
@@ -138,13 +138,13 @@ func TestInbox_ResumableIsTasksUpdatedSinceLastSeen(t *testing.T) {
 
 func TestInbox_RecentChangesExcludeOwnActions(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
 	// Alice's own action; should NOT appear.
-	_ = b.events.Append(&Event{Kind: EventTaskStateChanged, TaskID: "T-1", Actor: "alice"})
+	_ = b.events.Append(&Event{Kind: EventTaskStateChanged, TaskID: ref("T-1"), Actor: "alice"})
 	// Bob's action on alice's task; SHOULD appear.
-	_ = b.events.Append(&Event{Kind: EventTaskStateChanged, TaskID: "T-1", Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskStateChanged, TaskID: ref("T-1"), Actor: "bob"})
 
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if len(box.RecentChanges) != 1 {
 		t.Fatalf("want 1 recent change, got %d", len(box.RecentChanges))
 	}
@@ -157,36 +157,36 @@ func TestInbox_RecentChangesIncludeReassignToMe(t *testing.T) {
 	b := newStubBackend()
 	// Task currently belongs to bob (so not in alice's assigned list), but
 	// the journal records a reassignment whose payload `to` is alice.
-	b.tasks.store["T-99"] = &Task{ID: "T-99", AssignedAgent: "bob", State: TaskStateTodo}
+	b.tasks.store[ref("T-99")] = &Task{ID: ref("T-99"), AssignedAgent: "bob", State: TaskStateTodo}
 	_ = b.events.Append(&Event{
 		Kind:    EventTaskAssigned,
-		TaskID:  "T-99",
+		TaskID:  ref("T-99"),
 		Actor:   "bob",
 		Payload: map[string]any{"from": "", "to": "alice"},
 	})
 
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if len(box.RecentChanges) != 1 {
 		t.Fatalf("want 1 recent change, got %d", len(box.RecentChanges))
 	}
-	if box.RecentChanges[0].TaskID != "T-99" {
+	if box.RecentChanges[0].TaskID != ref("T-99") {
 		t.Errorf("got task %q, want T-99", box.RecentChanges[0].TaskID)
 	}
 }
 
 func TestInbox_RecentChangesRespectSince(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
 	// Three events at synthetic timestamps t=1,2,3.
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
 
 	// Pre-seed alice's cursor to the second event's timestamp; only event #3
 	// should show up.
-	b.cursors.store["alice"] = time.Unix(2, 0).UTC()
+	b.cursors.store[cursorKey{"alice", testProject}] = time.Unix(2, 0).UTC()
 
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if len(box.RecentChanges) != 1 {
 		t.Fatalf("want 1 recent change after cursor, got %d", len(box.RecentChanges))
 	}
@@ -194,12 +194,12 @@ func TestInbox_RecentChangesRespectSince(t *testing.T) {
 
 func TestInbox_RecentChangesChronological(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
 
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if len(box.RecentChanges) != 3 {
 		t.Fatalf("want 3, got %d", len(box.RecentChanges))
 	}
@@ -212,17 +212,17 @@ func TestInbox_RecentChangesChronological(t *testing.T) {
 
 func TestInbox_AdvancesCursor(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
 
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	if _, err := c.Inbox("alice"); err != nil {
 		t.Fatalf("first Inbox: %v", err)
 	}
 	if b.cursors.setN != 1 {
 		t.Fatalf("want 1 Set call, got %d", b.cursors.setN)
 	}
-	cur, _ := b.cursors.Get("alice")
+	cur, _ := b.cursors.Get("alice", testProject)
 	if cur.IsZero() {
 		t.Fatal("cursor not advanced past zero")
 	}
@@ -237,11 +237,11 @@ func TestInbox_AdvancesCursor(t *testing.T) {
 
 func TestInbox_LastSeenAtIsPreviousCursor(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
 	pre := time.Unix(42, 0).UTC()
-	b.cursors.store["alice"] = pre
+	b.cursors.store[cursorKey{"alice", testProject}] = pre
 
-	box, _ := New(b).Inbox("alice")
+	box, _ := New(b, WithProject(testProject)).Inbox("alice")
 	if !box.LastSeenAt.Equal(pre) {
 		t.Errorf("LastSeenAt: got %v, want %v", box.LastSeenAt, pre)
 	}
@@ -249,17 +249,17 @@ func TestInbox_LastSeenAtIsPreviousCursor(t *testing.T) {
 
 func TestPeekInbox_DoesNotAdvanceCursor(t *testing.T) {
 	b := newStubBackend()
-	b.tasks.store["T-1"] = &Task{ID: "T-1", AssignedAgent: "alice", State: TaskStateTodo}
-	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: "T-1", Actor: "bob"})
+	b.tasks.store[ref("T-1")] = &Task{ID: ref("T-1"), AssignedAgent: "alice", State: TaskStateTodo}
+	_ = b.events.Append(&Event{Kind: EventTaskCommented, TaskID: ref("T-1"), Actor: "bob"})
 
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	if _, err := c.PeekInbox("alice"); err != nil {
 		t.Fatalf("PeekInbox: %v", err)
 	}
 	if b.cursors.setN != 0 {
 		t.Errorf("Peek should not call Set; setN=%d", b.cursors.setN)
 	}
-	cur, _ := b.cursors.Get("alice")
+	cur, _ := b.cursors.Get("alice", testProject)
 	if !cur.IsZero() {
 		t.Errorf("cursor should remain zero after Peek, got %v", cur)
 	}

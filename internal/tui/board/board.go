@@ -266,7 +266,7 @@ func columnBody(col Column, tasks []client.Task, resolver *tui.Resolver, width i
 			lines = append(lines, "")
 		}
 		t := tasks[i]
-		selected := selectedID != "" && t.ID == selectedID
+		selected := !selectedID.IsZero() && t.ID == selectedID
 		// Card content area shrinks by the gutter width so the marker
 		// doesn't push the right border out.
 		card := renderCard(t, col.Header, resolver, width-4-len(markerGutter), selected)
@@ -312,7 +312,7 @@ func applyMarker(card string, selected bool) string {
 // selection style (yellow/amber) so the focused card stands out from the
 // list at a glance, matching the arrow marker the caller prepends.
 func renderCard(t client.Task, columnHeader client.TaskState, resolver *tui.Resolver, contentWidth int, selected bool) string {
-	idText := "#" + t.ID
+	idText := tui.RefBare(t.ID)
 	subjectRoom := contentWidth - lipgloss.Width(idText) - 2
 	if subjectRoom < 1 {
 		subjectRoom = 1
@@ -335,8 +335,8 @@ func renderCard(t client.Task, columnHeader client.TaskState, resolver *tui.Reso
 	} else {
 		agentLine = dimStyle.Render("    —")
 	}
-	if t.ParentID != "" {
-		agentLine += dimStyle.Render("  #") + dimStyle.Render(t.ParentID)
+	if !t.ParentID.IsZero() {
+		agentLine += dimStyle.Render("  ") + dimStyle.Render(tui.RefBare(t.ParentID))
 	}
 
 	parts := []string{idLine, agentLine}

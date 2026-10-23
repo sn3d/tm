@@ -7,7 +7,7 @@ import (
 
 func TestStubEvents_AppendAssignsIDAndTimestamp(t *testing.T) {
 	s := &stubEvents{}
-	e := &Event{Kind: EventTaskCreated, TaskID: "1"}
+	e := &Event{Kind: EventTaskCreated, TaskID: ref("1")}
 	if err := s.Append(e); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestStubEvents_AppendAssignsIDAndTimestamp(t *testing.T) {
 func TestStubEvents_ListNewestFirst(t *testing.T) {
 	s := &stubEvents{}
 	for i := 0; i < 3; i++ {
-		_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "t"})
+		_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: ref("t")})
 	}
 	got, err := s.List(EventFilter{})
 	if err != nil {
@@ -38,17 +38,17 @@ func TestStubEvents_ListNewestFirst(t *testing.T) {
 
 func TestStubEvents_ListFilters(t *testing.T) {
 	s := &stubEvents{}
-	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "1", Actor: "alice"})
-	_ = s.Append(&Event{Kind: EventTaskAssigned, TaskID: "1", Actor: "bob"})
-	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "2", Actor: "alice"})
-	_ = s.Append(&Event{Kind: EventTaskParentChanged, TaskID: "3", Actor: "carol"})
+	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: ref("1"), Actor: "alice"})
+	_ = s.Append(&Event{Kind: EventTaskAssigned, TaskID: ref("1"), Actor: "bob"})
+	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: ref("2"), Actor: "alice"})
+	_ = s.Append(&Event{Kind: EventTaskParentChanged, TaskID: ref("3"), Actor: "carol"})
 
 	tests := []struct {
 		name   string
 		filter EventFilter
 		want   int
 	}{
-		{"by task", EventFilter{TaskID: "1"}, 2},
+		{"by task", EventFilter{TaskID: ref("1")}, 2},
 		{"by actor", EventFilter{Actor: "alice"}, 2},
 		{"by kind", EventFilter{Kinds: []EventKind{EventTaskAssigned}}, 1},
 		{"by kinds OR", EventFilter{Kinds: []EventKind{EventTaskAssigned, EventTaskCreated}}, 3},
@@ -69,22 +69,22 @@ func TestStubEvents_ListFilters(t *testing.T) {
 
 func TestStubEvents_ListSinceIsExclusive(t *testing.T) {
 	s := &stubEvents{}
-	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "1"})
+	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: ref("1")})
 	cutoff := s.appended[0].Timestamp
-	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: "2"})
+	_ = s.Append(&Event{Kind: EventTaskCreated, TaskID: ref("2")})
 
 	got, err := s.List(EventFilter{Since: cutoff})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(got) != 1 || got[0].TaskID != "2" {
+	if len(got) != 1 || got[0].TaskID != ref("2") {
 		t.Errorf("expected only event with TaskID=2, got %+v", got)
 	}
 }
 
 // sanity check that ActorSystem fallback works when no option is supplied.
 func TestClient_DefaultActorIsSystem(t *testing.T) {
-	c := New(newStubBackend())
+	c := New(newStubBackend(), WithProject(testProject))
 	if c.actor != ActorSystem {
 		t.Errorf("default actor: got %q, want %q", c.actor, ActorSystem)
 	}
@@ -96,7 +96,7 @@ func TestClient_DefaultActorIsSystem(t *testing.T) {
 }
 
 func TestClient_WithActorOverrides(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	evs := c.backend.(*stubBackend).events.appended
 	if evs[0].Actor != "alice" {
@@ -105,14 +105,14 @@ func TestClient_WithActorOverrides(t *testing.T) {
 }
 
 func TestClient_WithActorEmptyFallsBackToSystem(t *testing.T) {
-	c := New(newStubBackend(), WithActor(""))
+	c := New(newStubBackend(), WithProject(testProject), WithActor(""))
 	if c.actor != ActorSystem {
 		t.Errorf("empty actor should fall back to %q, got %q", ActorSystem, c.actor)
 	}
 }
 
 func TestClient_EmitsTimestampedEvents(t *testing.T) {
-	c := New(newStubBackend())
+	c := New(newStubBackend(), WithProject(testProject))
 	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	evs := c.backend.(*stubBackend).events.appended
 	if evs[0].Timestamp.IsZero() {

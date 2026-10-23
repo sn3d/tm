@@ -62,9 +62,13 @@ var EditCmd = &cli.Command{
 			return err
 		}
 
-		id := command.Args().First()
-		if id == "" {
-			return fmt.Errorf("task ID is required, e.g. `tm edit 123`")
+		arg := command.Args().First()
+		if arg == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm edit 123` or `tm edit TM/#123`")
+		}
+		id, err := c.ParseRef(arg)
+		if err != nil {
+			return err
 		}
 		t, err := c.GetTask(id)
 		if err != nil {
@@ -96,8 +100,8 @@ var EditCmd = &cli.Command{
 				Description: description,
 				Assigned:    assigned,
 				State:       state.String(),
-				DependsOn:   dependsOn,
-				Parent:      parentID,
+				DependsOn:   client.FormatTaskRefs(dependsOn),
+				Parent:      parentID.String(),
 				Labels:      labels,
 				Mode:        string(mode),
 			})
@@ -113,8 +117,12 @@ var EditCmd = &cli.Command{
 			subject = draft.Subject
 			description = draft.Description
 			assigned = draft.Assigned
-			dependsOn = draft.DependsOn
-			parentID = draft.Parent
+			if dependsOn, err = c.ParseRefs(draft.DependsOn); err != nil {
+				return err
+			}
+			if parentID, err = c.ParseRef(draft.Parent); err != nil {
+				return err
+			}
 			labels = draft.Labels
 			if draft.State != "" {
 				state, err = client.ParseTaskState(draft.State)
@@ -144,10 +152,14 @@ var EditCmd = &cli.Command{
 				assigned = command.String("assigned")
 			}
 			if command.IsSet("depends-on") {
-				dependsOn = parseDependsOn(command.String("depends-on"))
+				if dependsOn, err = c.ParseRefs(parseCommaList(command.String("depends-on"))); err != nil {
+					return err
+				}
 			}
 			if command.IsSet("parent") {
-				parentID = command.String("parent")
+				if parentID, err = c.ParseRef(command.String("parent")); err != nil {
+					return err
+				}
 			}
 			if command.IsSet("labels") {
 				labels = parseLabels(command.String("labels"))
@@ -172,7 +184,8 @@ var EditCmd = &cli.Command{
 		}); err != nil {
 			return err
 		}
-		fmt.Printf("%s Edited task %s\n", color.GreenString("✓"), color.New(color.Bold).Sprint(id))
+		fmt.Printf("%s Edited task %s\n", color.GreenString("✓"),
+			color.New(color.Bold).Sprint(displayRef(c, id)))
 		return nil
 	},
 }

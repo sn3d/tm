@@ -36,7 +36,10 @@ var CommentCmd = &cli.Command{
 		if args.Len() < 2 {
 			return fmt.Errorf("usage: tm comment <id> <text>")
 		}
-		id := args.Get(0)
+		id, err := c.ParseRef(args.Get(0))
+		if err != nil {
+			return err
+		}
 		text := args.Get(1)
 
 		who := command.String("who")
@@ -47,7 +50,8 @@ var CommentCmd = &cli.Command{
 		if err := c.AddTaskComment(id, who, text); err != nil {
 			return err
 		}
-		fmt.Printf("%s Added comment to task %s\n", color.GreenString("✓"), color.New(color.Bold).Sprint(id))
+		fmt.Printf("%s Added comment to task %s\n", color.GreenString("✓"),
+			color.New(color.Bold).Sprint(displayRef(c, id)))
 		return nil
 	},
 }

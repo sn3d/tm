@@ -46,11 +46,11 @@ func buildModel(t *testing.T, tasks []client.Task) Model {
 
 func sampleTasks() []client.Task {
 	return []client.Task{
-		{ID: "1", Subject: "todo-a", State: client.TaskStateTodo},
-		{ID: "2", Subject: "todo-b", State: client.TaskStateTodo},
-		{ID: "3", Subject: "in-progress", State: client.TaskStateInProgress},
-		{ID: "4", Subject: "review", State: client.TaskStateInReview},
-		{ID: "5", Subject: "done", State: client.TaskStateDone},
+		{ID: tref("1"), Subject: "todo-a", State: client.TaskStateTodo},
+		{ID: tref("2"), Subject: "todo-b", State: client.TaskStateTodo},
+		{ID: tref("3"), Subject: "in-progress", State: client.TaskStateInProgress},
+		{ID: tref("4"), Subject: "review", State: client.TaskStateInReview},
+		{ID: tref("5"), Subject: "done", State: client.TaskStateDone},
 	}
 }
 
@@ -61,7 +61,7 @@ func manyTodos(n int) []client.Task {
 	tasks := make([]client.Task, n)
 	for i := range n {
 		tasks[i] = client.Task{
-			ID:        string(rune('a' + i)),
+			ID:        tref(string(rune('a' + i))),
 			Subject:   "card",
 			State:     client.TaskStateTodo,
 			CreatedAt: base.Add(time.Duration(i) * time.Hour),
@@ -204,8 +204,8 @@ func TestUpdate_RightArrowSkipsEmptyColumns(t *testing.T) {
 	// Pressing right from Backlog should land on Done, not the empty
 	// columns between them.
 	tasks := []client.Task{
-		{ID: "a", State: client.TaskStateTodo},
-		{ID: "z", State: client.TaskStateDone},
+		{ID: tref("a"), State: client.TaskStateTodo},
+		{ID: tref("z"), State: client.TaskStateDone},
 	}
 	m := buildModel(t, tasks)
 	if m.colIdx != 0 {
@@ -220,8 +220,8 @@ func TestUpdate_RightArrowSkipsEmptyColumns(t *testing.T) {
 
 func TestUpdate_LeftArrowSkipsEmptyColumns(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "a", State: client.TaskStateTodo},
-		{ID: "z", State: client.TaskStateDone},
+		{ID: tref("a"), State: client.TaskStateTodo},
+		{ID: tref("z"), State: client.TaskStateDone},
 	}
 	m := buildModel(t, tasks)
 	// Move to Done (col 3) via the right-skip we just verified.
@@ -240,7 +240,7 @@ func TestUpdate_LeftArrowSkipsEmptyColumns(t *testing.T) {
 
 func TestUpdate_ArrowAtEndOfNonEmptyColumnsIsNoop(t *testing.T) {
 	// Only Backlog has tasks; right has nowhere to go.
-	tasks := []client.Task{{ID: "a", State: client.TaskStateTodo}}
+	tasks := []client.Task{{ID: tref("a"), State: client.TaskStateTodo}}
 	m := buildModel(t, tasks)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(Model)
@@ -254,8 +254,8 @@ func TestClampSelection_SeeksNonEmptyColumnAfterReload(t *testing.T) {
 	// then "reload" with In Progress emptied — clampSelection should hop
 	// back to the still-populated Backlog.
 	startTasks := []client.Task{
-		{ID: "a", State: client.TaskStateTodo},
-		{ID: "x", State: client.TaskStateInProgress},
+		{ID: tref("a"), State: client.TaskStateTodo},
+		{ID: tref("x"), State: client.TaskStateInProgress},
 	}
 	m := buildModel(t, startTasks)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
@@ -264,7 +264,7 @@ func TestClampSelection_SeeksNonEmptyColumnAfterReload(t *testing.T) {
 		t.Fatalf("setup: expected colIdx=1 (In Progress), got %d", m.colIdx)
 	}
 	// Reload without the In Progress task — only Backlog has tasks now.
-	emptied := []client.Task{{ID: "a", State: client.TaskStateTodo}}
+	emptied := []client.Task{{ID: tref("a"), State: client.TaskStateTodo}}
 	next, _ = m.Update(tasksLoadedMsg{tasks: emptied})
 	m = next.(Model)
 	if m.colIdx != 0 {
@@ -277,7 +277,7 @@ func TestClampSelection_LoadIntoEmptyBacklogSeeksRight(t *testing.T) {
 	// non-empty column to the right rather than leaving the marker
 	// invisible on col 0.
 	tasks := []client.Task{
-		{ID: "x", State: client.TaskStateInProgress},
+		{ID: tref("x"), State: client.TaskStateInProgress},
 	}
 	m := buildModel(t, tasks)
 	if m.colIdx != 1 {
@@ -335,7 +335,7 @@ func TestUpdate_ShiftLMoveTriggersMoveCmd(t *testing.T) {
 	if _, ok := msg.(cardMovedMsg); !ok {
 		t.Fatalf("expected cardMovedMsg, got %T (%v)", msg, msg)
 	}
-	if lastMove.id != "1" || lastMove.to != client.TaskStateInProgress {
+	if lastMove.id != tref("1") || lastMove.to != client.TaskStateInProgress {
 		t.Errorf("expected move id=1 to=in_progress, got id=%q to=%q",
 			lastMove.id, lastMove.to)
 	}
@@ -389,7 +389,7 @@ func TestUpdate_ArchiveKeyTriggersArchiveCmd(t *testing.T) {
 	if _, ok := msg.(taskArchivedMsg); !ok {
 		t.Fatalf("expected taskArchivedMsg, got %T (%v)", msg, msg)
 	}
-	if archived != "1" {
+	if archived != tref("1") {
 		t.Errorf("expected archive id=1, got %q", archived)
 	}
 }
@@ -407,7 +407,7 @@ func TestUpdate_TaskArchivedMsgReturnsToBoardFromDetail(t *testing.T) {
 	if m.mode != viewBoard {
 		t.Errorf("expected viewBoard after archive, got %v", m.mode)
 	}
-	if m.detail.Task.ID != "" {
+	if m.detail.Task.ID != tref("") {
 		t.Errorf("expected detail cleared after archive, got %q", m.detail.Task.ID)
 	}
 	if m.status != "archived" {
@@ -532,7 +532,7 @@ func TestUpdate_EnterOpensDetail(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected detailLoadedMsg, got %T", msg)
 	}
-	if dl.detail.Task.ID != "1" {
+	if dl.detail.Task.ID != tref("1") {
 		t.Errorf("expected task id 1, got %q", dl.detail.Task.ID)
 	}
 }
@@ -642,7 +642,7 @@ func TestUpdate_CommentInputCtrlSSubmits(t *testing.T) {
 	if _, ok := msg.(commentSubmittedMsg); !ok {
 		t.Fatalf("expected commentSubmittedMsg, got %T", msg)
 	}
-	if posted.id != "1" || posted.body != "looks good" {
+	if posted.id != tref("1") || posted.body != "looks good" {
 		t.Errorf("expected post(id=1, body=looks good), got post(id=%q, body=%q)",
 			posted.id, posted.body)
 	}

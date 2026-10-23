@@ -30,10 +30,18 @@ var Cmd = &cli.Command{
 		&cli.BoolFlag{Name: "last-week", Usage: "Use the previous Mon-Sun week instead of the current one."},
 		&cli.StringFlag{Name: "actor", Usage: "Filter to one actor. Omit for all actors."},
 		&cli.StringFlag{Name: "format", Usage: "Output format: text|json.", Value: "text"},
+		&cli.BoolFlag{Name: "all", Usage: "Report across every project in the instance."},
 	},
 	Action: func(ctx context.Context, command *cli.Command) error {
 		cfg := ctx.Value(client.CfgKey).(*client.Config)
-		c, err := app.NewClient(cfg)
+		all := command.Bool("all")
+		var c *client.Client
+		var err error
+		if all {
+			c, err = app.NewInstanceClient(cfg)
+		} else {
+			c, err = app.NewClient(cfg)
+		}
 		if err != nil {
 			return err
 		}
@@ -43,7 +51,12 @@ var Cmd = &cli.Command{
 			return err
 		}
 
-		entries, err := c.Timesheet(from, to, command.String("actor"))
+		var entries []client.TimesheetEntry
+		if all {
+			entries, err = c.TimesheetAll(from, to, command.String("actor"))
+		} else {
+			entries, err = c.Timesheet(from, to, command.String("actor"))
+		}
 		if err != nil {
 			return err
 		}
@@ -111,7 +124,7 @@ func renderText(entries []client.TimesheetEntry) {
 		fmt.Printf("%s  %s  %s  %s  %s\n",
 			dim(ts),
 			color.YellowString(padRight(string(e.Activity), 10)),
-			color.CyanString(padRight("task "+e.TaskID, 14)),
+			color.CyanString(padRight(e.TaskID.String(), 16)),
 			padRight(truncate(e.TaskSubject, 40), 40),
 			detail(e),
 		)

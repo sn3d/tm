@@ -1,51 +1,77 @@
 // Package app is the composition root: it wires a *client.Client to the
-// concrete backend selected by Config. Entry points (cmd/, internal/mcp, ...)
-// should construct their client via app.NewClient instead of building the
-// backend themselves.
+// sqlite backend for the project and instance that scope resolution picked.
+// Entry points (cmd/, internal/mcp, ...) should construct their client via
+// app.NewClient instead of building the backend themselves.
 package app
 
 import (
 	"fmt"
 
-	"github.com/sn3d/tm/internal/backend/filestorage"
 	"github.com/sn3d/tm/internal/backend/sqlite"
 	"github.com/sn3d/tm/internal/client"
 )
 
-// NewClient builds a fully-wired *client.Client from cfg. The backend is
-// chosen by cfg.Backend; per-backend options are read from cfg.Options.
-// An empty cfg falls back to defaults (sqlite backend in ~/.tm/), so
-// callers can pass &client.Config{} when no configuration file exists.
+// NewClient builds a fully-wired *client.Client bound to cfg.Resolved's
+// project, reading the database cfg.Resolved names.
+//
+// Scope resolution must have run first (the root command's Before hook does
+// it). A config with no resolved project is an error rather than a guess —
+// no command silently writes to a project it inferred.
 func NewClient(cfg *client.Config) (*client.Client, error) {
-	applyDefaults(cfg)
+	if cfg == nil {
+		return nil, fmt.Errorf("no configuration loaded")
+	}
+	if cfg.Resolved.Project == "" {
+		return nil, fmt.Errorf("no TM project selected; run 'tm init' here or in a parent directory, or pass --project TICKER")
+	}
 	b, err := newBackend(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return client.New(b, client.WithActor(cfg.Actor)), nil
+	return client.New(b,
+		client.WithActor(cfg.Actor),
+		client.WithProject(cfg.Resolved.Project),
+	), nil
 }
 
-func applyDefaults(cfg *client.Config) {
-	if cfg.Backend == "" {
-		cfg.Backend = "sqlite"
+// NewInstanceClient builds a Client for registry-level work (`tm project`,
+// `tm init --list`, `tm migrate`, cross-project reads) where a database is
+// needed but no single project is bound. The returned Client errors on any
+// single-project operation, which is the intended guard.
+func NewInstanceClient(cfg *client.Config) (*client.Client, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("no configuration loaded")
 	}
-	if cfg.ProjectRoot != "" {
-		if cfg.Options == nil {
-			cfg.Options = map[string]string{}
-		}
-		if _, set := cfg.Options["project_root"]; !set {
-			cfg.Options["project_root"] = cfg.ProjectRoot
-		}
+	b, err := newBackend(cfg)
+	if err != nil {
+		return nil, err
 	}
+	opts := []client.Option{client.WithActor(cfg.Actor)}
+	// Bind the project when one happens to be resolved, so a command can
+	// use both the registry and the current project without rebuilding.
+	if cfg.Resolved.Project != "" {
+		opts = append(opts, client.WithProject(cfg.Resolved.Project))
+	}
+	return client.New(b, opts...), nil
 }
 
 func newBackend(cfg *client.Config) (client.Backend, error) {
+	// Config.Backend remains the seam where a future github / jira backend
+	// plugs in. Only sqlite is implemented; filestorage was removed once all
+	// markdown moved into SQLite tables.
 	switch cfg.Backend {
-	case "sqlite":
-		return sqlite.NewBackendFromOptions(cfg.Options)
-	case "filestorage":
-		return filestorage.NewBackendFromOptions(cfg.Options)
+	case "", "sqlite":
+		return sqlite.NewBackend(resolveDBPath(cfg))
 	default:
-		return nil, fmt.Errorf("unknown backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown backend %q (only %q is implemented)", cfg.Backend, "sqlite")
 	}
+}
+
+// resolveDBPath prefers the resolved instance path, falling back to an
+// explicit db_path option (used by tests wiring a client directly).
+func resolveDBPath(cfg *client.Config) string {
+	if cfg.Resolved.DBPath != "" {
+		return cfg.Resolved.DBPath
+	}
+	return cfg.Options["db_path"]
 }

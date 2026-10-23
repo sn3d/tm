@@ -11,7 +11,10 @@ import (
 func (s *Server) handleTimesheet(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
-	var since, until *time.Time
+	var (
+		since, until *time.Time
+		err          error
+	)
 	if v, ok := args["since"].(string); ok && v != "" {
 		ts, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -30,7 +33,18 @@ func (s *Server) handleTimesheet(_ context.Context, req mcp.CallToolRequest) (*m
 	from, to := client.ResolveTimesheetRange(time.Now(), lastWeek, since, until)
 
 	actor, _ := args["actor"].(string)
-	entries, err := s.c.Timesheet(from, to, actor)
+	allProjects, _ := args["all_projects"].(bool)
+
+	var entries []client.TimesheetEntry
+	if allProjects {
+		entries, err = s.c.TimesheetAll(from, to, actor)
+	} else {
+		c, cerr := s.clientFor(args)
+		if cerr != nil {
+			return mcp.NewToolResultErrorFromErr("select project", cerr), nil
+		}
+		entries, err = c.Timesheet(from, to, actor)
+	}
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("build timesheet", err), nil
 	}

@@ -64,8 +64,11 @@ var Cmd = &cli.Command{
 		// load is captured at construction so the model can re-invoke it
 		// after every action without re-parsing flags or rebuilding the
 		// client. The closure honours --mine, --parent, --archived/--all.
-		parent := command.String("parent")
 		hasParent := command.IsSet("parent")
+		parent, err := c.ParseRef(command.String("parent"))
+		if err != nil {
+			return err
+		}
 		mine := command.Bool("mine")
 		actor := cfg.Actor
 

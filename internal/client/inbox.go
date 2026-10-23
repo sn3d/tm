@@ -24,7 +24,11 @@ import (
 // Terminal states (done, cancelled) drop the task from any inbox via the
 // category filter.
 type Inbox struct {
-	Actor         string
+	Actor string
+	// Project is the canonical ticker this inbox was computed for. A
+	// cross-project inbox (InboxAll) leaves it empty and tags each task and
+	// event with its own project instead.
+	Project       string
 	Tasks         []Task
 	Resumable     []Task
 	RecentChanges []Event
@@ -46,33 +50,44 @@ func (c *Client) PeekInbox(actor string) (*Inbox, error) {
 }
 
 func (c *Client) inbox(actor string, advance bool) (*Inbox, error) {
+	project, err := c.requireProject()
+	if err != nil {
+		return nil, err
+	}
+	return c.inboxFor(actor, project, advance)
+}
+
+// inboxFor computes one project's inbox. Split out of inbox so InboxAll can
+// reuse it per project without rebinding a Client each time.
+func (c *Client) inboxFor(actor, project string, advance bool) (*Inbox, error) {
 	if actor == "" {
 		return nil, fmt.Errorf("inbox: actor is required")
 	}
 
 	cursors := c.backend.ActorCursors()
-	lastSeen, err := cursors.Get(actor)
+	lastSeen, err := cursors.Get(actor, project)
 	if err != nil {
-		return nil, fmt.Errorf("load cursor for %q: %w", actor, err)
+		return nil, fmt.Errorf("load cursor for %q in %q: %w", actor, project, err)
 	}
 
-	tasks, err := c.assignedTasks(actor)
+	tasks, err := c.assignedTasks(actor, project)
 	if err != nil {
 		return nil, err
 	}
-	changes, err := c.recentChanges(actor, tasks, lastSeen)
+	changes, err := c.recentChanges(actor, project, tasks, lastSeen)
 	if err != nil {
 		return nil, err
 	}
 
 	if advance {
-		if err := cursors.Set(actor, time.Now().UTC()); err != nil {
-			log.Printf("inbox cursor advance failed (actor=%s): %v", actor, err)
+		if err := cursors.Set(actor, project, time.Now().UTC()); err != nil {
+			log.Printf("inbox cursor advance failed (actor=%s project=%s): %v", actor, project, err)
 		}
 	}
 
 	return &Inbox{
 		Actor:         actor,
+		Project:       project,
 		Tasks:         tasks,
 		Resumable:     resumableTasks(tasks, lastSeen),
 		RecentChanges: changes,
@@ -92,8 +107,8 @@ func resumableTasks(tasks []Task, lastSeen time.Time) []Task {
 	return out
 }
 
-func (c *Client) assignedTasks(actor string) ([]Task, error) {
-	all, err := c.backend.Tasks().GetAll()
+func (c *Client) assignedTasks(actor, project string) ([]Task, error) {
+	all, err := c.backend.Tasks().GetAll(project)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
@@ -113,21 +128,28 @@ func (c *Client) assignedTasks(actor string) ([]Task, error) {
 			out = append(out, t)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].UpdatedAt.After(out[j].UpdatedAt)
-		}
-		return out[i].ID < out[j].ID
-	})
+	sortTasksByRecency(out)
 	return out, nil
+}
+
+// sortTasksByRecency orders tasks most-recently-updated first, with the ref
+// breaking ties. Comparing on the ref string keeps the order total and
+// deterministic across projects, which a cross-project inbox needs.
+func sortTasksByRecency(tasks []Task) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if !tasks[i].UpdatedAt.Equal(tasks[j].UpdatedAt) {
+			return tasks[i].UpdatedAt.After(tasks[j].UpdatedAt)
+		}
+		return tasks[i].ID.String() < tasks[j].ID.String()
+	})
 }
 
 // recentChanges returns events since `since` that involve the actor: either
 // the event touches an item currently assigned to them, or it is a
 // reassignment to them. Events authored by the actor are excluded — your own
 // actions are not news. Output is oldest-first for chronological reading.
-func (c *Client) recentChanges(actor string, tasks []Task, since time.Time) ([]Event, error) {
-	events, err := c.backend.Events().List(EventFilter{Since: since})
+func (c *Client) recentChanges(actor, project string, tasks []Task, since time.Time) ([]Event, error) {
+	events, err := c.backend.Events().List(EventFilter{Project: project, Since: since})
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
@@ -146,17 +168,23 @@ func (c *Client) recentChanges(actor string, tasks []Task, since time.Time) ([]E
 			out = append(out, e)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Timestamp.Equal(out[j].Timestamp) {
-			return out[i].ID < out[j].ID
-		}
-		return out[i].Timestamp.Before(out[j].Timestamp)
-	})
+	sortEventsChronologically(out)
 	return out, nil
 }
 
+// sortEventsChronologically orders events oldest-first for reading, with the
+// ULID breaking ties.
+func sortEventsChronologically(events []Event) {
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
+}
+
 func (c *Client) eventInvolvesActor(e Event, actor string, taskIDs map[TaskID]struct{}) bool {
-	if e.TaskID != "" {
+	if !e.TaskID.IsZero() {
 		if _, ok := taskIDs[e.TaskID]; ok {
 			return true
 		}

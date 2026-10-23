@@ -28,15 +28,20 @@ var UnarchiveCmd = &cli.Command{
 		if err != nil {
 			return err
 		}
-		id := command.Args().First()
-		if id == "" {
-			return fmt.Errorf("task ID is required, e.g. `tm unarchive 123`")
+
+		arg := command.Args().First()
+		if arg == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm unarchive 123` or `tm unarchive TM/#123`")
+		}
+		id, err := c.ParseRef(arg)
+		if err != nil {
+			return err
 		}
 		if err := c.UnarchiveTask(id); err != nil {
 			return err
 		}
 		bold := color.New(color.Bold).Sprint
-		fmt.Printf("%s Unarchived task %s\n", color.GreenString("✓"), bold(id))
+		fmt.Printf("%s Unarchived task %s\n", color.GreenString("✓"), bold(displayRef(c, id)))
 		return nil
 	},
 }

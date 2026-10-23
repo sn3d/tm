@@ -8,6 +8,15 @@ import (
 	"github.com/sn3d/tm/internal/client"
 )
 
+// refBare renders the "#42" form used throughout the board, which is a
+// single-project view where the project is implicit.
+func refBare(ref client.TaskID) string {
+	if ref.IsZero() {
+		return ""
+	}
+	return "#" + ref.ID
+}
+
 // renderDetail builds the full-screen detail view. Width is the terminal
 // column count; scrollOffset is the row index of the first visible content
 // row (the header always stays anchored at the top — only the body
@@ -48,7 +57,7 @@ func detailHeader(t client.Task, resolver interface {
 	StateText(client.TaskState) string
 	LabelsText([]string) string
 }, width int) string {
-	id := idStyle.Render("#" + t.ID)
+	id := idStyle.Render(refBare(t.ID))
 	subject := titleStyle.Render(t.Subject)
 	rule := dimStyle.Render(strings.Repeat("─", maxInt(1, width-2)))
 
@@ -61,8 +70,8 @@ func detailHeader(t client.Task, resolver interface {
 	if len(t.Labels) > 0 {
 		meta = append(meta, resolver.LabelsText(t.Labels))
 	}
-	if t.ParentID != "" {
-		meta = append(meta, dimStyle.Render("parent ")+idStyle.Render("#"+t.ParentID))
+	if !t.ParentID.IsZero() {
+		meta = append(meta, dimStyle.Render("parent ")+idStyle.Render(refBare(t.ParentID)))
 	}
 	if t.ArchivedAt != nil {
 		meta = append(meta, lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("archived"))
@@ -103,7 +112,7 @@ func detailBody(d TaskDetail, resolver interface {
 		b.WriteString("\n")
 	} else {
 		for _, st := range d.Subtasks {
-			id := idStyle.Render("#" + st.ID)
+			id := idStyle.Render(refBare(st.ID))
 			agent := dimStyle.Render("—")
 			if st.AssignedAgent != "" {
 				agent = dimStyle.Render("@") + dimStyle.Render(st.AssignedAgent)

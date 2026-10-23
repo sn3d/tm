@@ -16,7 +16,7 @@ func kinds(events []Event) []EventKind {
 
 func TestCreateTask_EmitsCreatedEvent(t *testing.T) {
 	b := newStubBackend()
-	c := New(b, WithActor("alice"))
+	c := New(b, WithProject(testProject), WithActor("alice"))
 	id, err := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc", AssignedAgent: "agent-x"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -47,7 +47,7 @@ func TestCreateTask_EmitsCreatedEvent(t *testing.T) {
 
 func TestCreateTask_PayloadOmitsEmptyDependsOn(t *testing.T) {
 	b := newStubBackend()
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	if _, err := c.CreateTask(CreateTaskInput{Subject: "s"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestCreateTask_PayloadOmitsEmptyDependsOn(t *testing.T) {
 
 func TestEditTask_EmitsOnlyChangedFieldEvents(t *testing.T) {
 	b := newStubBackend()
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", AssignedAgent: "alice"})
 	b.events.appended = nil // reset to focus on Edit events
 
@@ -79,16 +79,16 @@ func TestEditTask_EmitsOnlyChangedFieldEvents(t *testing.T) {
 
 func TestEditTask_EmitsAssignedAndParentAndDeps(t *testing.T) {
 	b := newStubBackend()
-	b.seed("parent-1")
-	b.seed("parent-2")
-	b.seed("dep-a")
-	b.seed("dep-b")
+	b.seed(ref("parent-1"))
+	b.seed(ref("parent-2"))
+	b.seed(ref("dep-a"))
+	b.seed(ref("dep-b"))
 
-	c := New(b)
-	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", AssignedAgent: "alice", DependsOn: []TaskID{"dep-a"}, ParentID: "parent-1"})
+	c := New(b, WithProject(testProject))
+	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", AssignedAgent: "alice", DependsOn: []TaskID{ref("dep-a")}, ParentID: ref("parent-1")})
 	b.events.appended = nil
 
-	if err := c.EditTask(id, EditTaskInput{Subject: "subj", State: TaskStateTodo, AssignedAgent: "bob", DependsOn: []TaskID{"dep-b"}, ParentID: "parent-2"}); err != nil {
+	if err := c.EditTask(id, EditTaskInput{Subject: "subj", State: TaskStateTodo, AssignedAgent: "bob", DependsOn: []TaskID{ref("dep-b")}, ParentID: ref("parent-2")}); err != nil {
 		t.Fatalf("EditTask: %v", err)
 	}
 	got := kinds(b.events.appended)
@@ -100,7 +100,7 @@ func TestEditTask_EmitsAssignedAndParentAndDeps(t *testing.T) {
 
 func TestEditTask_NoEventsWhenNothingChanged(t *testing.T) {
 	b := newStubBackend()
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc", AssignedAgent: "alice"})
 	b.events.appended = nil
 
@@ -114,7 +114,7 @@ func TestEditTask_NoEventsWhenNothingChanged(t *testing.T) {
 
 func TestEditTask_EditedEventCarriesOnlyDiffFields(t *testing.T) {
 	b := newStubBackend()
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "subj", Description: "desc"})
 	b.events.appended = nil
 
@@ -137,7 +137,7 @@ func TestEditTask_EditedEventCarriesOnlyDiffFields(t *testing.T) {
 
 func TestAddTaskComment_EmitsCommentEventWithoutBody(t *testing.T) {
 	b := newStubBackend()
-	c := New(b)
+	c := New(b, WithProject(testProject))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "s"})
 	b.events.appended = nil
 
@@ -161,7 +161,7 @@ func TestAddTaskComment_EmitsCommentEventWithoutBody(t *testing.T) {
 
 func TestListEvents_PassesThroughToBackend(t *testing.T) {
 	b := newStubBackend()
-	c := New(b, WithActor("alice"))
+	c := New(b, WithProject(testProject), WithActor("alice"))
 	_, _ = c.CreateTask(CreateTaskInput{Subject: "s"})
 	_, _ = c.CreateTask(CreateTaskInput{Subject: "t"})
 

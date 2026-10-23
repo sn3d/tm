@@ -32,10 +32,16 @@ var ArchiveCmd = &cli.Command{
 		if err != nil {
 			return err
 		}
-		id := command.Args().First()
-		if id == "" {
-			return fmt.Errorf("task ID is required, e.g. `tm archive 123`")
+
+		arg := command.Args().First()
+		if arg == "" {
+			return fmt.Errorf("task ID is required, e.g. `tm archive 123` or `tm archive TM/#123`")
 		}
+		id, err := c.ParseRef(arg)
+		if err != nil {
+			return err
+		}
+
 		cascade := !command.Bool("no-cascade")
 		count, err := c.ArchiveTask(id, cascade)
 		if err != nil {
@@ -43,10 +49,11 @@ var ArchiveCmd = &cli.Command{
 		}
 		check := color.GreenString("✓")
 		bold := color.New(color.Bold).Sprint
+		shown := displayRef(c, id)
 		if count > 0 {
-			fmt.Printf("%s Archived task %s (+ %d descendants)\n", check, bold(id), count)
+			fmt.Printf("%s Archived task %s (+ %d descendants)\n", check, bold(shown), count)
 		} else {
-			fmt.Printf("%s Archived task %s\n", check, bold(id))
+			fmt.Printf("%s Archived task %s\n", check, bold(shown))
 		}
 		return nil
 	},

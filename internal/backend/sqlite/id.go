@@ -6,22 +6,22 @@ import (
 	"strconv"
 )
 
-// nextSharedNumericID returns the next sequential numeric ID for tasks. The
-// counter is named "shared" for historical reasons — before plans were
-// collapsed into tasks the counter was shared across both tables so IDs were
-// guaranteed unique across them. Post-collapse the counter scans only
-// tasks, and former plan IDs are preserved as task IDs by the collapse
-// migration. The GLOB filter requires a leading digit and forbids any
-// non-digit char, so ULIDs and other mixed-form IDs are excluded. The query
-// takes the max as integer and returns (max + 1) as a string. It runs
-// inside the caller's transaction so the read+write pair is atomic.
-func nextSharedNumericID(tx *sql.Tx) (string, error) {
+// nextProjectNumericID returns the next sequential numeric ID within one
+// project. Numbering restarts per project, which is what TM/#1 and BILL/#1
+// coexisting implies — and it is what makes the composite primary key able to
+// fold many old databases together without renumbering anything.
+//
+// The GLOB filter requires a leading digit and forbids any non-digit char, so
+// ULIDs and other mixed-form IDs are excluded from the max. The query runs
+// inside the caller's transaction so the read+write pair stays atomic.
+func nextProjectNumericID(tx *sql.Tx, project string) (string, error) {
 	const q = `
 		SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) FROM tasks
-		WHERE id GLOB '[0-9]*' AND id NOT GLOB '*[^0-9]*'`
+		WHERE project_id = ?
+		  AND id GLOB '[0-9]*' AND id NOT GLOB '*[^0-9]*'`
 	var max int64
-	if err := tx.QueryRow(q).Scan(&max); err != nil {
-		return "", fmt.Errorf("query shared id: %w", err)
+	if err := tx.QueryRow(q, project).Scan(&max); err != nil {
+		return "", fmt.Errorf("query next id for project %q: %w", project, err)
 	}
 	return strconv.FormatInt(max+1, 10), nil
 }

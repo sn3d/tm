@@ -21,18 +21,34 @@ var listCmd = &cli.Command{
 		&cli.StringSliceFlag{Name: "kind", Usage: "Filter by event kind (repeatable; OR semantics)"},
 		&cli.StringFlag{Name: "since", Usage: "Only events after this RFC3339 timestamp"},
 		&cli.IntFlag{Name: "limit", Usage: "Max events to return (0 = no limit)", Value: 50},
+		&cli.BoolFlag{Name: "all", Usage: "Show events from every project in the instance."},
 	},
 	Action: func(ctx context.Context, command *cli.Command) error {
 		cfg := ctx.Value(client.CfgKey).(*client.Config)
-		c, err := app.NewClient(cfg)
+		all := command.Bool("all")
+		// --all spans every project in the resolved instance, so it needs a
+		// connection but not a bound project.
+		var c *client.Client
+		var err error
+		if all {
+			c, err = app.NewInstanceClient(cfg)
+		} else {
+			c, err = app.NewClient(cfg)
+		}
 		if err != nil {
 			return err
 		}
 
 		filter := client.EventFilter{
-			TaskID: command.String("task"),
-			Actor:  command.String("actor"),
-			Limit:  int(command.Int("limit")),
+			Actor: command.String("actor"),
+			Limit: int(command.Int("limit")),
+		}
+		if t := command.String("task"); t != "" {
+			ref, perr := c.ParseRef(t)
+			if perr != nil {
+				return perr
+			}
+			filter.TaskID = ref
 		}
 		for _, k := range command.StringSlice("kind") {
 			filter.Kinds = append(filter.Kinds, client.EventKind(k))
@@ -45,7 +61,12 @@ var listCmd = &cli.Command{
 			filter.Since = ts
 		}
 
-		events, err := c.ListEvents(filter)
+		var events []client.Event
+		if all {
+			events, err = c.JournalAll(filter)
+		} else {
+			events, err = c.ListEvents(filter)
+		}
 		if err != nil {
 			return err
 		}
@@ -63,7 +84,7 @@ var listCmd = &cli.Command{
 		dim := color.HiBlackString
 		for _, e := range events {
 			ts := e.Timestamp.Local().Format("2006-01-02 15:04:05")
-			target := targetLabel(e)
+			target := targetLabel(e, all)
 			fmt.Printf("%s  %s  %s  %s  %s\n",
 				dim(ts),
 				color.CyanString(padRight(e.Actor, 10)),
@@ -76,12 +97,17 @@ var listCmd = &cli.Command{
 	},
 }
 
-// targetLabel produces the "task TASK-5" column.
-func targetLabel(e client.Event) string {
-	if e.TaskID != "" {
-		return "task " + e.TaskID
+// targetLabel produces the task column. In a cross-project listing the
+// qualified TICKER/#id form is used so the reader can tell which repo an
+// entry came from; a single-project listing keeps the shorter bare form.
+func targetLabel(e client.Event, qualified bool) string {
+	if e.TaskID.IsZero() {
+		return "-"
 	}
-	return "-"
+	if qualified {
+		return e.TaskID.String()
+	}
+	return "task " + e.TaskID.ID
 }
 
 // verbFromKind strips the "task." prefix so the column reads

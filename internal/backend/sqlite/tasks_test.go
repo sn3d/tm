@@ -2,26 +2,11 @@ package sqlite
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/sn3d/tm/internal/client"
 )
-
-func newTempRepo(t *testing.T) client.TasksRepository {
-	t.Helper()
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
-
-	b, err := NewBackend(dbPath)
-	if err != nil {
-		t.Fatalf("NewBackend: %v", err)
-	}
-	return b.Tasks()
-}
 
 func TestTasksRepository_Create_AssignsID(t *testing.T) {
 	// Arrange
@@ -34,13 +19,13 @@ func TestTasksRepository_Create_AssignsID(t *testing.T) {
 	}
 
 	// Act
-	err := repo.Save(&task)
+	err := repo.Save(testProject, &task)
 
 	// Assert
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if task.ID == "" {
+	if task.ID.IsZero() == true {
 		t.Fatal("expected Save to assign a non-empty ID")
 	}
 	got, err := repo.GetByID(task.ID)
@@ -63,15 +48,15 @@ func TestTasksRepository_Create_AssignsUniqueIDs(t *testing.T) {
 	second := client.Task{Subject: "b"}
 
 	// Act
-	if err := repo.Save(&first); err != nil {
+	if err := repo.Save(testProject, &first); err != nil {
 		t.Fatalf("Save first: %v", err)
 	}
-	if err := repo.Save(&second); err != nil {
+	if err := repo.Save(testProject, &second); err != nil {
 		t.Fatalf("Save second: %v", err)
 	}
 
 	// Assert
-	if first.ID == "" || second.ID == "" {
+	if first.ID.IsZero() == true || second.ID.IsZero() == true {
 		t.Fatalf("expected non-empty IDs, got first=%q second=%q", first.ID, second.ID)
 	}
 	if first.ID == second.ID {
@@ -82,13 +67,13 @@ func TestTasksRepository_Create_AssignsUniqueIDs(t *testing.T) {
 func TestTasksRepository_GetByID(t *testing.T) {
 	// Arrange
 	repo := newTempRepo(t)
-	task := client.Task{ID: "fixed-id-1", Subject: "find me", State: client.TaskStateInProgress, AssignedAgent: "agent-a"}
-	if err := repo.Save(&task); err != nil {
+	task := client.Task{ID: ref("fixed-id-1"), Subject: "find me", State: client.TaskStateInProgress, AssignedAgent: "agent-a"}
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
 	// Act
-	got, err := repo.GetByID("fixed-id-1")
+	got, err := repo.GetByID(ref("fixed-id-1"))
 
 	// Assert
 	if err != nil {
@@ -97,7 +82,7 @@ func TestTasksRepository_GetByID(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected task, got nil")
 	}
-	if got.ID != "fixed-id-1" || got.Subject != "find me" || got.State != client.TaskStateInProgress || got.AssignedAgent != "agent-a" {
+	if got.ID != ref("fixed-id-1") || got.Subject != "find me" || got.State != client.TaskStateInProgress || got.AssignedAgent != "agent-a" {
 		t.Errorf("unexpected task: %+v", got)
 	}
 }
@@ -107,7 +92,7 @@ func TestTasksRepository_GetByID_NotFound(t *testing.T) {
 	repo := newTempRepo(t)
 
 	// Act
-	got, err := repo.GetByID("does-not-exist")
+	got, err := repo.GetByID(ref("does-not-exist"))
 
 	// Assert
 	if err != nil {
@@ -122,18 +107,18 @@ func TestTasksRepository_GetAll(t *testing.T) {
 	// Arrange
 	repo := newTempRepo(t)
 	seed := []client.Task{
-		{ID: "task-1", Subject: "first", State: client.TaskStateTodo, AssignedAgent: "a"},
-		{ID: "task-2", Subject: "second", State: client.TaskStateInProgress, AssignedAgent: "b"},
-		{ID: "task-3", Subject: "third", State: client.TaskStateDone, AssignedAgent: "c"},
+		{ID: ref("task-1"), Subject: "first", State: client.TaskStateTodo, AssignedAgent: "a"},
+		{ID: ref("task-2"), Subject: "second", State: client.TaskStateInProgress, AssignedAgent: "b"},
+		{ID: ref("task-3"), Subject: "third", State: client.TaskStateDone, AssignedAgent: "c"},
 	}
 	for i := range seed {
-		if err := repo.Save(&seed[i]); err != nil {
+		if err := repo.Save(testProject, &seed[i]); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
 	}
 
 	// Act
-	got, err := repo.GetAll()
+	got, err := repo.GetAll(testProject)
 
 	// Assert
 	if err != nil {
@@ -154,23 +139,23 @@ func TestTasksRepository_GetAll(t *testing.T) {
 
 func TestTasksRepository_ParentID_RoundTrip(t *testing.T) {
 	b := newTempBackend(t)
-	parent := client.Task{ID: "parent-1", Subject: "container", State: client.TaskStateDraft, Mode: client.TaskModePlanning}
-	if err := b.Tasks().Save(&parent); err != nil {
+	parent := client.Task{ID: ref("parent-1"), Subject: "container", State: client.TaskStateDraft, Mode: client.TaskModePlanning}
+	if err := b.Tasks().Save(testProject, &parent); err != nil {
 		t.Fatalf("seed parent: %v", err)
 	}
-	task := client.Task{ID: "task-1", Subject: "under parent", State: client.TaskStateTodo, ParentID: "parent-1"}
-	if err := b.Tasks().Save(&task); err != nil {
+	task := client.Task{ID: ref("task-1"), Subject: "under parent", State: client.TaskStateTodo, ParentID: ref("parent-1")}
+	if err := b.Tasks().Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := b.Tasks().GetByID("task-1")
+	got, err := b.Tasks().GetByID(ref("task-1"))
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected task, got nil")
 	}
-	if got.ParentID != "parent-1" {
+	if got.ParentID != ref("parent-1") {
 		t.Errorf("expected ParentID=parent-1, got %q", got.ParentID)
 	}
 }
@@ -178,23 +163,23 @@ func TestTasksRepository_ParentID_RoundTrip(t *testing.T) {
 func TestTasksRepository_GetByParent(t *testing.T) {
 	b := newTempBackend(t)
 	for _, id := range []string{"parent-1", "parent-2"} {
-		if err := b.Tasks().Save(&client.Task{ID: id, Subject: id, State: client.TaskStateDraft, Mode: client.TaskModePlanning}); err != nil {
+		if err := b.Tasks().Save(testProject, &client.Task{ID: ref(id), Subject: id, State: client.TaskStateDraft, Mode: client.TaskModePlanning}); err != nil {
 			t.Fatalf("seed parent %q: %v", id, err)
 		}
 	}
 	seed := []client.Task{
-		{ID: "t-a", Subject: "a", State: client.TaskStateTodo, ParentID: "parent-1"},
-		{ID: "t-b", Subject: "b", State: client.TaskStateTodo, ParentID: "parent-1"},
-		{ID: "t-c", Subject: "c", State: client.TaskStateTodo, ParentID: "parent-2"},
-		{ID: "t-d", Subject: "d", State: client.TaskStateTodo}, // top-level
+		{ID: ref("t-a"), Subject: "a", State: client.TaskStateTodo, ParentID: ref("parent-1")},
+		{ID: ref("t-b"), Subject: "b", State: client.TaskStateTodo, ParentID: ref("parent-1")},
+		{ID: ref("t-c"), Subject: "c", State: client.TaskStateTodo, ParentID: ref("parent-2")},
+		{ID: ref("t-d"), Subject: "d", State: client.TaskStateTodo}, // top-level
 	}
 	for i := range seed {
-		if err := b.Tasks().Save(&seed[i]); err != nil {
+		if err := b.Tasks().Save(testProject, &seed[i]); err != nil {
 			t.Fatalf("seed task %q: %v", seed[i].ID, err)
 		}
 	}
 
-	got, err := b.Tasks().GetByParent("parent-1")
+	got, err := b.Tasks().GetByParent(ref("parent-1"))
 	if err != nil {
 		t.Fatalf("GetByParent: %v", err)
 	}
@@ -202,22 +187,22 @@ func TestTasksRepository_GetByParent(t *testing.T) {
 		t.Fatalf("expected 2 tasks for parent-1, got %d", len(got))
 	}
 	for _, task := range got {
-		if task.ParentID != "parent-1" {
+		if task.ParentID != ref("parent-1") {
 			t.Errorf("expected ParentID=parent-1, got %q for task %q", task.ParentID, task.ID)
 		}
 	}
 
-	topLevel, err := b.Tasks().GetByParent("")
+	topLevel, err := b.Tasks().GetByParent(ref(""))
 	if err != nil {
 		t.Fatalf("GetByParent(empty): %v", err)
 	}
-	if len(topLevel) != 1 || topLevel[0].ID != "t-d" {
+	if len(topLevel) != 1 || topLevel[0].ID != ref("t-d") {
 		// parent-1 and parent-2 are also top-level by ParentID definition,
 		// so 3 top-level rows is correct. Recompute the expectation.
 		want := map[string]bool{"t-d": true, "parent-1": true, "parent-2": true}
 		got := map[string]bool{}
 		for _, t := range topLevel {
-			got[t.ID] = true
+			got[t.ID.ID] = true
 		}
 		for id := range want {
 			if !got[id] {
@@ -231,8 +216,7 @@ func TestTasksRepository_GetByParent(t *testing.T) {
 // migrate cleanly: legacy rows survive with empty timestamps and new saves
 // stamp them.
 func TestNewBackend_MigratesTasksAddTimestamps(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-ts-migration-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
+	dbPath := newTempDBPath(t)
 
 	{
 		db, err := sql.Open("sqlite", dbPath)
@@ -271,7 +255,7 @@ func TestNewBackend_MigratesTasksAddTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBackend: %v", err)
 	}
-	gotT, err := b.Tasks().GetByID("legacy-t")
+	gotT, err := b.Tasks().GetByID(ref("legacy-t"))
 	if err != nil {
 		t.Fatalf("GetByID legacy task: %v", err)
 	}
@@ -282,7 +266,7 @@ func TestNewBackend_MigratesTasksAddTimestamps(t *testing.T) {
 	// former plan id should now resolve as a planning-mode task with the
 	// same id, and still carry the zero timestamps that the original plan
 	// row had.
-	gotP, err := b.Tasks().GetByID("legacy-p")
+	gotP, err := b.Tasks().GetByID(ref("legacy-p"))
 	if err != nil {
 		t.Fatalf("GetByID legacy plan-as-task: %v", err)
 	}
@@ -294,7 +278,7 @@ func TestNewBackend_MigratesTasksAddTimestamps(t *testing.T) {
 	}
 
 	// Saving a legacy row should stamp both timestamps.
-	if err := b.Tasks().Save(gotT); err != nil {
+	if err := b.Tasks().Save(testProject, gotT); err != nil {
 		t.Fatalf("Save legacy task: %v", err)
 	}
 	if gotT.CreatedAt.IsZero() || gotT.UpdatedAt.IsZero() {
@@ -310,8 +294,7 @@ func TestNewBackend_MigratesTasksAddTimestamps(t *testing.T) {
 // should end up at the latest migration version after both 00001_init and
 // 00002_add_timestamps have been applied.
 func TestNewBackend_FreshDBAtLatestVersion(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-fresh-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
+	dbPath := newTempDBPath(t)
 
 	if _, err := NewBackend(dbPath); err != nil {
 		t.Fatalf("NewBackend: %v", err)
@@ -327,7 +310,8 @@ func TestNewBackend_FreshDBAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 5
+	// 00006 (projects + markdown split) is the latest migration.
+	const want = 6
 	if version != want {
 		t.Errorf("expected goose version %d, got %d", want, version)
 	}
@@ -336,8 +320,7 @@ func TestNewBackend_FreshDBAtLatestVersion(t *testing.T) {
 // A legacy database (tasks/plans present, no goose tracking) should be
 // stamped at version 1 and then later migrations should apply on top.
 func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-legacy-stamp-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
+	dbPath := newTempDBPath(t)
 
 	{
 		db, err := sql.Open("sqlite", dbPath)
@@ -372,7 +355,7 @@ func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	const want = 5
+	const want = 6
 	if version != want {
 		t.Errorf("expected goose version %d after legacy reconciliation + later migrations, got %d", want, version)
 	}
@@ -385,8 +368,7 @@ func TestNewBackend_LegacyDBMigratedToLatest(t *testing.T) {
 //   - plan_comments rows become comments on the now-task.
 //   - plans and plan_comments tables are dropped.
 func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-collapse-v4-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
+	dbPath := newTempDBPath(t)
 
 	// Stage 1: open the DB and let migrations through 00003 run, then
 	// roll the goose version back to 3 so 00004 hasn't run yet. That gives
@@ -396,26 +378,38 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open: %v", err)
 		}
-		if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-			t.Fatalf("PRAGMA: %v", err)
-		}
-		if err := runMigrations(db); err != nil {
-			t.Fatalf("runMigrations: %v", err)
-		}
-		// Roll back to version 3 so 00004 can be exercised below by the
-		// next NewBackend call. goose's API doesn't expose a partial-down,
-		// so we patch the version_id directly.
-		if _, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id >= 4`); err != nil {
-			t.Fatalf("rollback goose version: %v", err)
-		}
-		// Re-create the plans / plan_comments tables and the plan_id columns
-		// on tasks and events — those are dropped by 00004 so a fresh-on-v4
-		// DB doesn't have them, but a pre-v4 DB must. Also drop archived_at
-		// (added by 00005, which we're rolling past) so the schema looks
-		// genuinely like v3.
-		const reshape = `
-			DROP INDEX IF EXISTS idx_tasks_archived_at;
-			ALTER TABLE tasks DROP COLUMN archived_at;
+		// Build the version-3 schema directly. Migrating forward and then
+		// reshaping backward (the old approach) no longer works: 00006
+		// rebuilds `tasks` with a composite key, so "undo the last two
+		// migrations with ALTER TABLE" is not expressible. Writing the v3
+		// shape by hand is also a more honest fixture — it is what a real
+		// v3 database on disk actually looks like.
+		const v3Schema = `
+			CREATE TABLE tasks (
+				id             TEXT PRIMARY KEY,
+				subject        TEXT NOT NULL DEFAULT '',
+				description    TEXT NOT NULL DEFAULT '',
+				state          TEXT NOT NULL DEFAULT 'todo',
+				assigned_agent TEXT NOT NULL DEFAULT '',
+				plan_id        TEXT NOT NULL DEFAULT '',
+				created_at     TEXT NOT NULL DEFAULT '',
+				updated_at     TEXT NOT NULL DEFAULT '',
+				parent_id      TEXT NOT NULL DEFAULT '',
+				labels         TEXT NOT NULL DEFAULT '[]',
+				mode           TEXT NOT NULL DEFAULT 'standard'
+			);
+			CREATE TABLE task_deps (
+				task_id       TEXT NOT NULL,
+				depends_on_id TEXT NOT NULL,
+				PRIMARY KEY (task_id, depends_on_id),
+				FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+			);
+			CREATE TABLE comments (
+				id      TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+				who     TEXT NOT NULL DEFAULT '',
+				comment TEXT NOT NULL DEFAULT ''
+			);
 			CREATE TABLE plans (
 				id             TEXT PRIMARY KEY,
 				subject        TEXT NOT NULL DEFAULT '',
@@ -431,11 +425,29 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 				who     TEXT NOT NULL DEFAULT '',
 				comment TEXT NOT NULL DEFAULT ''
 			);
-			ALTER TABLE tasks ADD COLUMN plan_id TEXT NOT NULL DEFAULT '';
-			ALTER TABLE events ADD COLUMN plan_id TEXT NOT NULL DEFAULT '';
+			CREATE TABLE events (
+				id      TEXT PRIMARY KEY,
+				ts      TEXT NOT NULL,
+				actor   TEXT NOT NULL DEFAULT '',
+				kind    TEXT NOT NULL,
+				task_id TEXT NOT NULL DEFAULT '',
+				plan_id TEXT NOT NULL DEFAULT '',
+				payload TEXT NOT NULL DEFAULT '{}'
+			);
+			CREATE TABLE actor_cursors (
+				actor        TEXT PRIMARY KEY,
+				last_seen_at TEXT NOT NULL
+			);
+			CREATE TABLE goose_db_version (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				version_id INTEGER NOT NULL,
+				is_applied INTEGER NOT NULL,
+				tstamp TIMESTAMP DEFAULT (datetime('now'))
+			);
+			INSERT INTO goose_db_version (version_id, is_applied) VALUES (0,1),(1,1),(2,1),(3,1);
 		`
-		if _, err := db.Exec(reshape); err != nil {
-			t.Fatalf("reshape pre-v4: %v", err)
+		if _, err := db.Exec(v3Schema); err != nil {
+			t.Fatalf("create v3 schema: %v", err)
 		}
 		// Seed: one plan in 'active' state, one task pointing at it, one
 		// comment on the plan.
@@ -454,14 +466,14 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 		_ = db.Close()
 	}
 
-	// Stage 2: open via NewBackend. This should re-run goose, which will
-	// see version 3 and apply 00004 to collapse.
+	// Stage 2: open via NewBackend. goose sees version 3 and applies 00004
+	// (collapse plans into tasks), then 00005 and 00006 on top.
 	b, err := NewBackend(dbPath)
 	if err != nil {
 		t.Fatalf("NewBackend (collapse): %v", err)
 	}
 
-	planAsTask, err := b.Tasks().GetByID("7")
+	planAsTask, err := b.Tasks().GetByID(ref("7"))
 	if err != nil {
 		t.Fatalf("GetByID 7: %v", err)
 	}
@@ -475,18 +487,18 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 		t.Errorf("expected state=in_progress (from plan.active), got %q", planAsTask.State)
 	}
 
-	child, err := b.Tasks().GetByID("8")
+	child, err := b.Tasks().GetByID(ref("8"))
 	if err != nil {
 		t.Fatalf("GetByID 8: %v", err)
 	}
 	if child == nil {
 		t.Fatal("expected child task 8, got nil")
 	}
-	if child.ParentID != "7" {
+	if child.ParentID != ref("7") {
 		t.Errorf("expected ParentID=7 on child, got %q", child.ParentID)
 	}
 
-	comments, err := b.Comments().GetForTask("7")
+	comments, err := b.Comments().GetForTask(ref("7"))
 	if err != nil {
 		t.Fatalf("GetForTask 7: %v", err)
 	}
@@ -517,8 +529,7 @@ func TestNewBackend_CollapsesPreV4Database(t *testing.T) {
 // all; ParentID is the hierarchy field and should be empty for the legacy
 // row since it never participated in a plan.
 func TestNewBackend_MigratesLegacyTasks(t *testing.T) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("tm-test-migration-%d.db", time.Now().UnixNano()))
-	t.Cleanup(func() { _ = os.Remove(dbPath) })
+	dbPath := newTempDBPath(t)
 
 	{
 		db, err := sql.Open("sqlite", dbPath)
@@ -546,14 +557,14 @@ func TestNewBackend_MigratesLegacyTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBackend: %v", err)
 	}
-	got, err := b.Tasks().GetByID("legacy-1")
+	got, err := b.Tasks().GetByID(ref("legacy-1"))
 	if err != nil {
 		t.Fatalf("GetByID after migration: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected legacy task to survive migration")
 	}
-	if got.ParentID != "" {
+	if got.ParentID.IsZero() != true {
 		t.Errorf("expected ParentID empty after migration, got %q", got.ParentID)
 	}
 	if _, err := NewBackend(dbPath); err != nil {
@@ -564,20 +575,20 @@ func TestNewBackend_MigratesLegacyTasks(t *testing.T) {
 func TestTasksRepository_Update(t *testing.T) {
 	// Arrange
 	repo := newTempRepo(t)
-	original := client.Task{ID: "update-target", Subject: "draft", Description: "v1", State: client.TaskStateTodo, AssignedAgent: "agent-a"}
-	if err := repo.Save(&original); err != nil {
+	original := client.Task{ID: ref("update-target"), Subject: "draft", Description: "v1", State: client.TaskStateTodo, AssignedAgent: "agent-a"}
+	if err := repo.Save(testProject, &original); err != nil {
 		t.Fatalf("Save (initial): %v", err)
 	}
-	updated := client.Task{ID: "update-target", Subject: "final", Description: "v2", State: client.TaskStateDone, AssignedAgent: "agent-b"}
+	updated := client.Task{ID: ref("update-target"), Subject: "final", Description: "v2", State: client.TaskStateDone, AssignedAgent: "agent-b"}
 
 	// Act
-	err := repo.Save(&updated)
+	err := repo.Save(testProject, &updated)
 
 	// Assert
 	if err != nil {
 		t.Fatalf("Save (update): %v", err)
 	}
-	got, err := repo.GetByID("update-target")
+	got, err := repo.GetByID(ref("update-target"))
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
@@ -588,7 +599,7 @@ func TestTasksRepository_Update(t *testing.T) {
 		got.State != updated.State || got.AssignedAgent != updated.AssignedAgent {
 		t.Errorf("update did not persist: got %+v, want %+v", got, updated)
 	}
-	all, err := repo.GetAll()
+	all, err := repo.GetAll(testProject)
 	if err != nil {
 		t.Fatalf("GetAll: %v", err)
 	}
@@ -602,7 +613,7 @@ func TestTasksRepository_Update(t *testing.T) {
 func TestTasksRepository_Save_StampsTimestamps(t *testing.T) {
 	repo := newTempRepo(t)
 	task := client.Task{Subject: "stamps"}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save (initial): %v", err)
 	}
 	if task.CreatedAt.IsZero() || task.UpdatedAt.IsZero() {
@@ -612,7 +623,7 @@ func TestTasksRepository_Save_StampsTimestamps(t *testing.T) {
 
 	time.Sleep(2 * time.Millisecond)
 	task.Subject = "stamps v2"
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save (update): %v", err)
 	}
 	if !task.CreatedAt.Equal(created) {
@@ -637,20 +648,20 @@ func TestTasksRepository_Save_StampsTimestamps(t *testing.T) {
 func TestTasksRepository_GetAll_OrdersByUpdatedAtDesc(t *testing.T) {
 	repo := newTempRepo(t)
 	first := client.Task{Subject: "first"}
-	if err := repo.Save(&first); err != nil {
+	if err := repo.Save(testProject, &first); err != nil {
 		t.Fatalf("Save first: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
 	second := client.Task{Subject: "second"}
-	if err := repo.Save(&second); err != nil {
+	if err := repo.Save(testProject, &second); err != nil {
 		t.Fatalf("Save second: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := repo.Save(&first); err != nil {
+	if err := repo.Save(testProject, &first); err != nil {
 		t.Fatalf("re-save first: %v", err)
 	}
 
-	got, err := repo.GetAll()
+	got, err := repo.GetAll(testProject)
 	if err != nil {
 		t.Fatalf("GetAll: %v", err)
 	}
@@ -665,7 +676,7 @@ func TestTasksRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
 	repo := newTempRepo(t)
 	want := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	task := client.Task{Subject: "imported", CreatedAt: want}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if !task.CreatedAt.Equal(want) {
@@ -683,7 +694,7 @@ func TestTasksRepository_Save_HonorsCallerSuppliedCreatedAt(t *testing.T) {
 func TestTasksRepository_ArchivedAt_NilRoundTrips(t *testing.T) {
 	repo := newTempRepo(t)
 	task := client.Task{Subject: "active"}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	got, err := repo.GetByID(task.ID)
@@ -699,7 +710,7 @@ func TestTasksRepository_ArchivedAt_SetRoundTrips(t *testing.T) {
 	repo := newTempRepo(t)
 	want := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
 	task := client.Task{Subject: "archived", ArchivedAt: &want}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	got, err := repo.GetByID(task.ID)
@@ -718,12 +729,12 @@ func TestTasksRepository_ArchivedAt_ClearReverts(t *testing.T) {
 	repo := newTempRepo(t)
 	when := time.Date(2026, 6, 17, 14, 23, 11, 0, time.UTC)
 	task := client.Task{Subject: "first archive then unarchive", ArchivedAt: &when}
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save archived: %v", err)
 	}
 	// Now unarchive: same row, ArchivedAt cleared.
 	task.ArchivedAt = nil
-	if err := repo.Save(&task); err != nil {
+	if err := repo.Save(testProject, &task); err != nil {
 		t.Fatalf("Save unarchived: %v", err)
 	}
 	got, err := repo.GetByID(task.ID)

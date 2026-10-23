@@ -5,20 +5,22 @@ import (
 	"time"
 )
 
-type TaskID = string
-
 type Task struct {
+	// ID is the fully-qualified reference (project + per-project number).
+	// Tasks are addressed as TICKER/#id.
 	ID            TaskID
 	Subject       string
 	Description   string
 	State         TaskState
 	AssignedAgent string
 	DependsOn     []TaskID
-	ParentID      TaskID // empty string => top-level task; self-reference forming the hierarchy
-	Labels        []string
-	Mode          TaskMode
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// ParentID is the zero TaskRef for a top-level task. Parents are
+	// same-project by definition (see the design doc's non-goals).
+	ParentID  TaskID
+	Labels    []string
+	Mode      TaskMode
+	CreatedAt time.Time
+	UpdatedAt time.Time
 	// ArchivedAt marks a task as soft-hidden when non-nil. Archive is a
 	// visibility signal independent of State: a `todo` task can be archived
 	// (parked) and a `done` task can stay un-archived (recently shipped).
@@ -73,7 +75,7 @@ func ParseTaskMode(s string) (TaskMode, error) {
 
 // CreateTaskInput is the parameter bag for Client.CreateTask. Optional
 // fields take their zero value's natural meaning: empty AssignedAgent =
-// unassigned, empty ParentID = top-level, nil DependsOn = no deps, nil
+// unassigned, zero ParentID = top-level, nil DependsOn = no deps, nil
 // Labels = no labels, empty Mode = TaskModeDefault.
 type CreateTaskInput struct {
 	Subject       string
@@ -101,19 +103,46 @@ type EditTaskInput struct {
 }
 
 type TasksRepository interface {
-	// Save inserts or updates a task. When t.ID is empty the repository
-	// assigns a new ID and writes it back into t.ID. When t.ID is set the
-	// existing row is replaced. The repository stamps t.CreatedAt on insert
-	// (preserved across updates) and t.UpdatedAt on every save, writing both
-	// back into the struct.
-	Save(t *Task) (err error)
-	GetByID(id TaskID) (t *Task, err error)
-	// GetAll returns every task ordered by UpdatedAt descending (most
-	// recently changed first), with ID as a tiebreaker.
-	GetAll() (t []Task, err error)
-	// GetByParent returns tasks whose ParentID matches the given id, ordered
-	// like GetAll. Pass "" to list top-level tasks (no parent).
-	GetByParent(parentID TaskID) (t []Task, err error)
+	// Save inserts or updates a task in the given project. When t.ID.ID is
+	// empty the repository assigns the next per-project number and writes the
+	// full ref back into t.ID. When t.ID is set the existing row is replaced.
+	// The repository stamps t.CreatedAt on insert (preserved across updates)
+	// and t.UpdatedAt on every save, writing both back into the struct.
+	//
+	// The task's description is written to task_descriptions in the same
+	// transaction, so a Save is atomic across both tables.
+	Save(project string, t *Task) (err error)
+
+	// GetByID returns the task the ref addresses, or (nil, nil) when no such
+	// row exists. Description IS populated — this is the detail-view path.
+	GetByID(ref TaskID) (t *Task, err error)
+
+	// GetAll returns every task in the project ordered by UpdatedAt
+	// descending (most recently changed first), with ID as a tiebreaker.
+	//
+	// Description is NOT populated — use GetByID for a task's body. List and
+	// board views render subject, state and labels; joining every
+	// description body to draw a board is waste.
+	GetAll(project string) (t []Task, err error)
+
+	// GetByParent returns tasks whose ParentID matches the given ref,
+	// ordered like GetAll. Pass a ref with an empty ID (but a set Project)
+	// to list that project's top-level tasks.
+	//
+	// Description is NOT populated, for the same reason as GetAll.
+	GetByParent(parentRef TaskID) (t []Task, err error)
+}
+
+// DescriptionsRepository persists task markdown bodies, one row per task,
+// created lazily: a task with no description has no row and reads back "".
+// Keeping prose out of the hot `tasks` table is what lets list and board
+// queries stay narrow.
+type DescriptionsRepository interface {
+	// Get returns the task's description body, or "" when no row exists.
+	Get(ref TaskID) (body string, err error)
+	// Set writes (or clears) the description. Writing "" deletes the row
+	// rather than storing an empty body, keeping the lazy-row invariant.
+	Set(ref TaskID, body string) (err error)
 }
 
 // TaskState is the lifecycle state of a task.

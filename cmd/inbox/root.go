@@ -26,18 +26,29 @@ var Cmd = &cli.Command{
 			Usage: "Max recent changes to return (0 = no limit).",
 			Value: 50,
 		},
+		&cli.BoolFlag{
+			Name:  "all",
+			Usage: "Show the inbox for every project in the instance.",
+		},
 		app.ActorFlag,
 	},
 	Action: func(ctx context.Context, command *cli.Command) error {
 		cfg := ctx.Value(client.CfgKey).(*client.Config)
 		app.ApplyActor(cfg, command)
+		peek := command.Bool("peek")
+		limit := int(command.Int("limit"))
+		resolver := tui.NewResolver(cfg.Styling)
+
+		if command.Bool("all") {
+			return runAll(cfg, peek, limit, resolver)
+		}
+
 		c, err := app.NewClient(cfg)
 		if err != nil {
 			return err
 		}
-
 		var box *client.Inbox
-		if command.Bool("peek") {
+		if peek {
 			box, err = c.PeekInbox(cfg.Actor)
 		} else {
 			box, err = c.Inbox(cfg.Actor)
@@ -46,16 +57,47 @@ var Cmd = &cli.Command{
 			return err
 		}
 
-		limit := int(command.Int("limit"))
-		resolver := tui.NewResolver(cfg.Styling)
-		printTasks(box.Tasks, resolver)
+		printTasks(box.Tasks, resolver, false)
 		fmt.Println()
-		printChanges(box.RecentChanges, box.LastSeenAt, limit)
+		printChanges(box.RecentChanges, box.LastSeenAt, limit, false)
 		return nil
 	},
 }
 
-func printTasks(tasks []client.Task, resolver *tui.Resolver) {
+// runAll prints one section per project with anything in it, spanning the
+// resolved instance. Each project keeps its own cursor, so reading one
+// project's section never marks another's work as seen.
+func runAll(cfg *client.Config, peek bool, limit int, resolver *tui.Resolver) error {
+	c, err := app.NewInstanceClient(cfg)
+	if err != nil {
+		return err
+	}
+	var boxes []*client.Inbox
+	if peek {
+		boxes, err = c.PeekInboxAll(cfg.Actor)
+	} else {
+		boxes, err = c.InboxAll(cfg.Actor)
+	}
+	if err != nil {
+		return err
+	}
+	if len(boxes) == 0 {
+		fmt.Println(color.HiBlackString("Nothing in any project."))
+		return nil
+	}
+	for i, box := range boxes {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Println(color.New(color.Bold, color.FgCyan).Sprint(box.Project))
+		printTasks(box.Tasks, resolver, true)
+		fmt.Println()
+		printChanges(box.RecentChanges, box.LastSeenAt, limit, true)
+	}
+	return nil
+}
+
+func printTasks(tasks []client.Task, resolver *tui.Resolver, qualified bool) {
 	bold := color.New(color.Bold).Sprint
 	fmt.Println(bold("Tasks"))
 	if len(tasks) == 0 {
@@ -65,12 +107,12 @@ func printTasks(tasks []client.Task, resolver *tui.Resolver) {
 	taskHeader := bold
 	printTaskRow(taskHeader("ID"), taskHeader("SUBJECT"), taskHeader("STATE"), taskHeader("PARENT"))
 	for _, t := range tasks {
-		parent := tui.Dash(t.ParentID)
-		if t.ParentID != "" {
-			parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
+		parent := tui.Dash("")
+		if !t.ParentID.IsZero() {
+			parent = tui.Truncate(tui.RefBare(t.ParentID), tui.ColParentWidth-2)
 		}
 		printTaskRow(
-			t.ID,
+			taskRefText(t.ID, qualified),
 			tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
 			resolver.StateBadge(t.State),
 			parent,
@@ -78,7 +120,7 @@ func printTasks(tasks []client.Task, resolver *tui.Resolver) {
 	}
 }
 
-func printChanges(events []client.Event, lastSeen time.Time, limit int) {
+func printChanges(events []client.Event, lastSeen time.Time, limit int, qualified bool) {
 	bold := color.New(color.Bold).Sprint
 	header := "Since " + formatSince(lastSeen)
 	fmt.Println(bold(header))
@@ -95,7 +137,7 @@ func printChanges(events []client.Event, lastSeen time.Time, limit int) {
 		fmt.Printf("%s  %s  %s  %s  %s\n",
 			dim(ts),
 			color.CyanString(padRight(e.Actor, 10)),
-			padRight(targetLabel(e), 16),
+			padRight(targetLabel(e, qualified), 16),
 			color.YellowString(padRight(verbFromKind(e.Kind), 22)),
 			summary(e),
 		)
@@ -118,11 +160,24 @@ func printTaskRow(id, subject, state, parent string) {
 	)
 }
 
-func targetLabel(e client.Event) string {
-	if e.TaskID != "" {
-		return "task " + e.TaskID
+// targetLabel produces the task column. A cross-project view qualifies the
+// ref so the reader can tell which repo an entry came from.
+func targetLabel(e client.Event, qualified bool) string {
+	if e.TaskID.IsZero() {
+		return "-"
 	}
-	return "-"
+	if qualified {
+		return e.TaskID.String()
+	}
+	return "task " + e.TaskID.ID
+}
+
+// taskRefText renders a task's own ref for the ID column.
+func taskRefText(ref client.TaskID, qualified bool) string {
+	if qualified {
+		return ref.String()
+	}
+	return ref.ID
 }
 
 func verbFromKind(k client.EventKind) string {

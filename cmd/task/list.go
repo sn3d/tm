@@ -56,7 +56,11 @@ var ListCmd = &cli.Command{
 		case label != "":
 			tasks, err = c.GetTasksByLabel(label, archived)
 		case command.IsSet("parent"):
-			tasks, err = c.GetTasksByParent(command.String("parent"), archived)
+			parent, perr := c.ParseRef(command.String("parent"))
+			if perr != nil {
+				return perr
+			}
+			tasks, err = c.GetTasksByParent(parent, archived)
 		default:
 			tasks, err = c.ListTasks(archived)
 		}
@@ -73,6 +77,9 @@ var ListCmd = &cli.Command{
 		})
 
 		resolver := tui.NewResolver(cfg.Styling)
+		// Rows print the qualified TICKER/#id form; the display name is
+		// looked up once rather than per row.
+		displayName := projectDisplayName(c, c.Project())
 		header := color.New(color.Bold).Sprint
 		fmt.Println(formatRow(header("ID"), header("SUBJECT"), header("STATE"), header("AGENT"), header("LABELS"), header("PARENT")))
 		for _, t := range tasks {
@@ -84,12 +91,12 @@ var ListCmd = &cli.Command{
 			if len(t.Labels) > 0 {
 				labels = tui.Truncate(resolver.LabelsBadge(t.Labels), tui.ColLabelsWidth-2)
 			}
-			parent := tui.Dash(t.ParentID)
-			if t.ParentID != "" {
-				parent = tui.Truncate(t.ParentID, tui.ColParentWidth-2)
+			parent := tui.Dash("")
+			if !t.ParentID.IsZero() {
+				parent = tui.Truncate(tui.RefBare(t.ParentID), tui.ColParentWidth-2)
 			}
 			row := formatRow(
-				t.ID,
+				t.ID.Display(displayName),
 				tui.Truncate(t.Subject, tui.ColSubjectWidth-2),
 				resolver.StateBadge(t.State),
 				agent,

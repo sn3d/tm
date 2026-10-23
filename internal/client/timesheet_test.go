@@ -75,7 +75,7 @@ func wideRange() (time.Time, time.Time) {
 }
 
 func TestTimesheet_Milestones(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 
 	id, err := c.CreateTask(CreateTaskInput{Subject: "Wire up billing"})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestTimesheet_Milestones(t *testing.T) {
 }
 
 func TestTimesheet_CancelledIsFinished(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "s"})
 	if err := c.EditTask(id, EditTaskInput{Subject: "s", State: TaskStateCancelled}); err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -154,7 +154,7 @@ func TestTimesheet_CancelledIsFinished(t *testing.T) {
 }
 
 func TestTimesheet_IgnoresNonMilestoneTransitions(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 	id, _ := c.CreateTask(CreateTaskInput{Subject: "s"})
 	if err := c.EditTask(id, EditTaskInput{Subject: "s", State: TaskStateBlocked}); err != nil {
 		t.Fatalf("block: %v", err)
@@ -178,8 +178,8 @@ func TestTimesheet_IgnoresNonMilestoneTransitions(t *testing.T) {
 
 func TestTimesheet_ActorFilter(t *testing.T) {
 	b := newStubBackend()
-	alice := New(b, WithActor("alice"))
-	bob := New(b, WithActor("bob"))
+	alice := New(b, WithProject(testProject), WithActor("alice"))
+	bob := New(b, WithProject(testProject), WithActor("bob"))
 
 	if _, err := alice.CreateTask(CreateTaskInput{Subject: "by alice"}); err != nil {
 		t.Fatalf("alice create: %v", err)
@@ -204,7 +204,7 @@ func TestTimesheet_ActorFilter(t *testing.T) {
 }
 
 func TestTimesheet_EmptyWindow(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 	if _, err := c.CreateTask(CreateTaskInput{Subject: "s"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestTimesheet_EmptyWindow(t *testing.T) {
 }
 
 func TestTimesheet_InvertedWindowErrors(t *testing.T) {
-	c := New(newStubBackend(), WithActor("alice"))
+	c := New(newStubBackend(), WithProject(testProject), WithActor("alice"))
 	from := time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC) // before from
 	if _, err := c.Timesheet(from, to, ""); err == nil {
@@ -238,11 +238,11 @@ func TestTimesheet_MissingTaskResolvesEmptySubject(t *testing.T) {
 	// Append a bare state-changed event whose task is not in the store.
 	_ = b.events.Append(&Event{
 		Kind:    EventTaskStateChanged,
-		TaskID:  "ghost",
+		TaskID:  ref("ghost"),
 		Actor:   "alice",
 		Payload: map[string]any{"from": "todo", "to": "in_progress"},
 	})
-	c := New(b, WithActor("alice"))
+	c := New(b, WithProject(testProject), WithActor("alice"))
 
 	from, to := wideRange()
 	entries, err := c.Timesheet(from, to, "")

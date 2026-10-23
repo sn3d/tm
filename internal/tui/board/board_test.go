@@ -21,13 +21,13 @@ func newResolver() *tui.Resolver {
 
 func TestGroupByColumn_CollapsesSevenStatesIntoFour(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "d", State: client.TaskStateDraft},
-		{ID: "t", State: client.TaskStateTodo},
-		{ID: "p", State: client.TaskStateInProgress},
-		{ID: "b", State: client.TaskStateBlocked},
-		{ID: "r", State: client.TaskStateInReview},
-		{ID: "x", State: client.TaskStateDone},
-		{ID: "c", State: client.TaskStateCancelled},
+		{ID: tref("d"), State: client.TaskStateDraft},
+		{ID: tref("t"), State: client.TaskStateTodo},
+		{ID: tref("p"), State: client.TaskStateInProgress},
+		{ID: tref("b"), State: client.TaskStateBlocked},
+		{ID: tref("r"), State: client.TaskStateInReview},
+		{ID: tref("x"), State: client.TaskStateDone},
+		{ID: tref("c"), State: client.TaskStateCancelled},
 	}
 	got := groupByColumn(tasks)
 	if len(got) != 4 {
@@ -46,7 +46,7 @@ func TestGroupByColumn_CollapsesSevenStatesIntoFour(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for _, tsk := range got[i] {
-			seen[tsk.ID] = true
+			seen[tsk.ID.ID] = true
 		}
 		for _, id := range ids {
 			if !seen[id] {
@@ -59,13 +59,13 @@ func TestGroupByColumn_CollapsesSevenStatesIntoFour(t *testing.T) {
 func TestGroupByColumn_SortsOldestFirst(t *testing.T) {
 	base := time.Unix(1000, 0).UTC()
 	tasks := []client.Task{
-		{ID: "newer", State: client.TaskStateTodo, CreatedAt: base.Add(2 * time.Hour)},
-		{ID: "older", State: client.TaskStateTodo, CreatedAt: base},
-		{ID: "mid", State: client.TaskStateTodo, CreatedAt: base.Add(time.Hour)},
+		{ID: tref("newer"), State: client.TaskStateTodo, CreatedAt: base.Add(2 * time.Hour)},
+		{ID: tref("older"), State: client.TaskStateTodo, CreatedAt: base},
+		{ID: tref("mid"), State: client.TaskStateTodo, CreatedAt: base.Add(time.Hour)},
 	}
 	got := groupByColumn(tasks)
 	backlog := got[0]
-	if backlog[0].ID != "older" || backlog[1].ID != "mid" || backlog[2].ID != "newer" {
+	if backlog[0].ID != tref("older") || backlog[1].ID != tref("mid") || backlog[2].ID != tref("newer") {
 		t.Errorf("expected [older mid newer], got [%s %s %s]",
 			backlog[0].ID, backlog[1].ID, backlog[2].ID)
 	}
@@ -73,13 +73,13 @@ func TestGroupByColumn_SortsOldestFirst(t *testing.T) {
 
 func TestGroupByColumn_DropsUnknownState(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "ok", State: client.TaskStateTodo},
-		{ID: "weird", State: client.TaskState("invented")},
+		{ID: tref("ok"), State: client.TaskStateTodo},
+		{ID: tref("weird"), State: client.TaskState("invented")},
 	}
 	got := groupByColumn(tasks)
 	for i, bucket := range got {
 		for _, tsk := range bucket {
-			if tsk.ID == "weird" {
+			if tsk.ID == tref("weird") {
 				t.Errorf("unknown state should be dropped, found in column %d", i)
 			}
 		}
@@ -113,13 +113,13 @@ func TestColumnWidth(t *testing.T) {
 
 func TestRender_ColumnTitlesAndCounts(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "1", Subject: "a", State: client.TaskStateTodo},
-		{ID: "2", Subject: "b", State: client.TaskStateInProgress},
-		{ID: "3", Subject: "c", State: client.TaskStateInReview},
-		{ID: "4", Subject: "d", State: client.TaskStateDone},
-		{ID: "5", Subject: "e", State: client.TaskStateCancelled},
+		{ID: tref("1"), Subject: "a", State: client.TaskStateTodo},
+		{ID: tref("2"), Subject: "b", State: client.TaskStateInProgress},
+		{ID: tref("3"), Subject: "c", State: client.TaskStateInReview},
+		{ID: tref("4"), Subject: "d", State: client.TaskStateDone},
+		{ID: tref("5"), Subject: "e", State: client.TaskStateCancelled},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	for _, want := range []string{
 		"Backlog", "(1)",
 		"In Progress", "(1)",
@@ -139,9 +139,9 @@ func TestRender_ColumnTitlesAndCounts(t *testing.T) {
 
 func TestRender_BlockedShowsStateBadgeInProgressColumn(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "B", Subject: "blocked one", State: client.TaskStateBlocked},
+		{ID: tref("B"), Subject: "blocked one", State: client.TaskStateBlocked},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	if !strings.Contains(out, "blocked") {
 		t.Errorf("expected blocked state to render, output:\n%s", out)
 	}
@@ -154,9 +154,9 @@ func TestRender_BlockedShowsStateBadgeInProgressColumn(t *testing.T) {
 
 func TestRender_TodoCardSuppressesStateBadge(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "T", Subject: "neutral subject", State: client.TaskStateTodo},
+		{ID: tref("T"), Subject: "neutral subject", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	// A todo card in the Backlog column should NOT emit a "todo" badge —
 	// the column header already implies the state. The text "Backlog" is
 	// the column title and is allowed; the bare word "todo" on a card is
@@ -169,9 +169,9 @@ func TestRender_TodoCardSuppressesStateBadge(t *testing.T) {
 
 func TestRender_UnassignedShowsDash(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "U", Subject: "no agent", State: client.TaskStateTodo},
+		{ID: tref("U"), Subject: "no agent", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	if !strings.Contains(out, "—") {
 		t.Errorf("expected em-dash for unassigned, got:\n%s", out)
 	}
@@ -179,10 +179,10 @@ func TestRender_UnassignedShowsDash(t *testing.T) {
 
 func TestRender_SelectionMarkerOnFocusedCardOnly(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "1", Subject: "first", State: client.TaskStateTodo},
-		{ID: "2", Subject: "second", State: client.TaskStateTodo},
+		{ID: tref("1"), Subject: "first", State: client.TaskStateTodo},
+		{ID: tref("2"), Subject: "second", State: client.TaskStateTodo},
 	}
-	out := render(tasks, newResolver(), 200, 200, "1", nil)
+	out := render(tasks, newResolver(), 200, 200, tref("1"), nil)
 	// The marker must appear before card #1's ID and NOT before card #2's.
 	first := strings.Index(out, "#1")
 	second := strings.Index(out, "#2")
@@ -202,10 +202,10 @@ func TestRender_SelectionMarkerOnFocusedCardOnly(t *testing.T) {
 
 func TestRender_ChildCardShowsParentID(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "child-7", Subject: "do the thing", State: client.TaskStateTodo,
-			AssignedAgent: "bob", ParentID: "plan-1"},
+		{ID: tref("child-7"), Subject: "do the thing", State: client.TaskStateTodo,
+			AssignedAgent: "bob", ParentID: tref("plan-1")},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	if !strings.Contains(out, "#plan-1") {
 		t.Errorf("expected child to show parent id #plan-1, got:\n%s", out)
 	}
@@ -217,9 +217,9 @@ func TestRender_ChildCardShowsParentID(t *testing.T) {
 
 func TestRender_TopLevelCardOmitsParentReference(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "root", Subject: "no parent", State: client.TaskStateTodo, AssignedAgent: "alice"},
+		{ID: tref("root"), Subject: "no parent", State: client.TaskStateTodo, AssignedAgent: "alice"},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	// "#root" appears as the card's own ID; check that the assignee line
 	// doesn't gain a trailing "#" parent reference.
 	if strings.Contains(out, "@alice  #") {
@@ -260,7 +260,7 @@ func TestRender_WindowsTallColumnWithMoreHints(t *testing.T) {
 	base := time.Unix(1000, 0).UTC()
 	for i := range 10 {
 		tasks = append(tasks, client.Task{
-			ID:      string(rune('a' + i)),
+			ID:      tref(string(rune('a' + i))),
 			Subject: "card",
 			State:   client.TaskStateTodo,
 			// Ascending CreatedAt so groupByColumn keeps them in a-j order.
@@ -269,7 +269,7 @@ func TestRender_WindowsTallColumnWithMoreHints(t *testing.T) {
 	}
 	// height 16 → capacity 2. Window starts at offset 3 in the Backlog column.
 	scrollOff := []int{3, 0, 0, 0}
-	out := render(tasks, newResolver(), 200, 16, "", scrollOff)
+	out := render(tasks, newResolver(), 200, 16, client.TaskRef{}, scrollOff)
 
 	// 3 cards hidden above, cards d & e visible, 5 hidden below.
 	if !strings.Contains(out, "↑ 3 more") {
@@ -299,7 +299,7 @@ func TestRender_HeightStableAcrossScroll(t *testing.T) {
 	base := time.Unix(1000, 0).UTC()
 	for i := range 20 {
 		tasks = append(tasks, client.Task{
-			ID:        string(rune('a' + i)),
+			ID:        tref(string(rune('a' + i))),
 			Subject:   "card",
 			State:     client.TaskStateTodo,
 			CreatedAt: base.Add(time.Duration(i) * time.Hour),
@@ -307,7 +307,7 @@ func TestRender_HeightStableAcrossScroll(t *testing.T) {
 	}
 	const height = 24
 	lineCount := func(off int) int {
-		out := render(tasks, newResolver(), 200, height, "", []int{off, 0, 0, 0})
+		out := render(tasks, newResolver(), 200, height, client.TaskRef{}, []int{off, 0, 0, 0})
 		return strings.Count(out, "\n") + 1
 	}
 	// top (no up-hint), middle (both hints), bottom (no down-hint).
@@ -317,7 +317,7 @@ func TestRender_HeightStableAcrossScroll(t *testing.T) {
 	}
 	// A board where nothing overflows must be the same height, so the footer
 	// doesn't jump when a column happens to fit entirely.
-	short := render(tasks[:2], newResolver(), 200, height, "", nil)
+	short := render(tasks[:2], newResolver(), 200, height, client.TaskRef{}, nil)
 	if got := strings.Count(short, "\n") + 1; got != top {
 		t.Errorf("short board height %d != scrolling board height %d", got, top)
 	}
@@ -325,11 +325,11 @@ func TestRender_HeightStableAcrossScroll(t *testing.T) {
 
 func TestRender_ShortColumnHasNoMoreHints(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "1", Subject: "a", State: client.TaskStateTodo},
-		{ID: "2", Subject: "b", State: client.TaskStateTodo},
+		{ID: tref("1"), Subject: "a", State: client.TaskStateTodo},
+		{ID: tref("2"), Subject: "b", State: client.TaskStateTodo},
 	}
 	// Plenty of height — both cards fit, no hints.
-	out := render(tasks, newResolver(), 200, 40, "", nil)
+	out := render(tasks, newResolver(), 200, 40, client.TaskRef{}, nil)
 	if strings.Contains(out, "more") {
 		t.Errorf("expected no scroll hints when everything fits, got:\n%s", out)
 	}
@@ -337,9 +337,9 @@ func TestRender_ShortColumnHasNoMoreHints(t *testing.T) {
 
 func TestRender_LabelsAppliedWithPalette(t *testing.T) {
 	tasks := []client.Task{
-		{ID: "L", Subject: "labelled", State: client.TaskStateTodo, Labels: []string{"plan"}},
+		{ID: tref("L"), Subject: "labelled", State: client.TaskStateTodo, Labels: []string{"plan"}},
 	}
-	out := render(tasks, newResolver(), 200, 200, "", nil)
+	out := render(tasks, newResolver(), 200, 200, client.TaskRef{}, nil)
 	if !strings.Contains(out, "plan") {
 		t.Errorf("expected 'plan' label to render, got:\n%s", out)
 	}
@@ -347,4 +347,14 @@ func TestRender_LabelsAppliedWithPalette(t *testing.T) {
 	if strings.Contains(out, "📝") {
 		t.Errorf("expected no 📝 emoji on cards, got:\n%s", out)
 	}
+}
+
+// tref builds a task reference in the board tests' project. The board is a
+// single-project view, so every fixture lives in one project and only the
+// bare number varies.
+func tref(id string) client.TaskID {
+	if id == "" {
+		return client.TaskRef{}
+	}
+	return client.TaskRef{Project: "tm", ID: id}
 }

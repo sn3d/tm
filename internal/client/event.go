@@ -33,19 +33,27 @@ type Event struct {
 	Timestamp time.Time
 	Actor     string
 	Kind      EventKind
-	TaskID    TaskID
-	Payload   map[string]any // kind-specific; see emit helpers in client
+	// Project is the canonical ticker the event belongs to. It is stored
+	// separately from TaskID rather than derived from it because the journal
+	// is append-only history that must survive project deletion — the column
+	// is deliberately NOT a foreign key.
+	Project string
+	TaskID  TaskID
+	Payload map[string]any // kind-specific; see emit helpers in client
 }
 
 // EventFilter narrows the result of EventsRepository.List. Zero-value fields
 // are ignored; non-zero fields are AND-combined. Kinds is OR-combined.
 type EventFilter struct {
-	TaskID TaskID
-	Actor  string
-	Kinds  []EventKind
-	Since  time.Time // exclusive lower bound
-	Until  time.Time // exclusive upper bound (zero = no upper bound)
-	Limit  int       // 0 = no limit
+	// Project narrows to one project's journal. Empty means every project in
+	// the instance, which is what JournalAll uses.
+	Project string
+	TaskID  TaskID
+	Actor   string
+	Kinds   []EventKind
+	Since   time.Time // exclusive lower bound
+	Until   time.Time // exclusive upper bound (zero = no upper bound)
+	Limit   int       // 0 = no limit
 }
 
 // EventsRepository is the persistence interface for the journal. Backends
